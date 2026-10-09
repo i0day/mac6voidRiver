@@ -1,0 +1,11 @@
+#!/bin/bash
+# U盘卸载 (dwm Super+F10)
+mounted=$(udisksctl status >/dev/null 2>&1; mount | grep -E '/media/|/run/media/' | awk '{print $1}')
+[ -z "$mounted" ] && { dunstify "unmounter" "没有已挂载的可移动设备"; exit 1; }
+chosen=$(echo "$mounted" | dmenu -i -p "卸载:")
+[ -z "$chosen" ] && exit 1
+if udisksctl unmount -b "$chosen" 2>/dev/null; then
+  dunstify "unmounter" "已安全弹出 $chosen"
+else
+  dunstify -u critical "unmounter" "卸载失败（可能被占用）"
+fi

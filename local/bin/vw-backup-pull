@@ -1,0 +1,19 @@
+#!/bin/bash
+# Pull Vaultwarden backups from oldmac VPS to local disk, keep 7 copies
+set -euo pipefail
+
+DEST="$HOME/backups/vaultwarden"
+KEEP=7
+mkdir -p "$DEST"
+
+# copy only files not present locally (rsync is idempotent, verifies checksums)
+rsync -a --include='*.tar.gz' --include='backup.log' --exclude='*' \
+    oldmac:/opt/backups/vaultwarden/ "$DEST/"
+
+# prune to KEEP most recent
+cd "$DEST"
+ls -1t vaultwarden_*.tar.gz 2>/dev/null | tail -n +$((KEEP+1)) | xargs -r rm -f
+
+COUNT=$(ls -1 vaultwarden_*.tar.gz 2>/dev/null | wc -l)
+echo "$(date -Iseconds) OK local_count=$COUNT" >> "$DEST/pull.log"
+echo "PULL_OK count=$COUNT"

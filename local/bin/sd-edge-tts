@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# speech-dispatcher generic-module engine: natural neural voice via edge-tts.
+# Called as: sd-edge-tts "text"  -> synthesizes to a temp wav and plays it.
+voice="${EDGE_TTS_VOICE:-}"
+text="$1"
+[ -z "$text" ] && exit 1
+# NEVER write to stdout: sd_generic uses it as its protocol channel
+exec 1>/dev/null
+# auto-pick Chinese neural voice when text contains CJK characters
+if [ -z "$voice" ]; then
+    if printf '%s' "$text" | grep -qP '[\x{4e00}-\x{9fff}]'; then
+        voice="zh-CN-XiaoxiaoNeural"
+    else
+        voice="en-US-AvaNeural"
+    fi
+fi
+ETTS=$(ls "$HOME"/.hermes/tools/python-*/bin/edge-tts 2>/dev/null | head -1)
+[ -z "$ETTS" ] && ETTS=edge-tts
+FP=$(ls "$HOME"/.hermes/tools/ffmpeg-*/bin/ffplay 2>/dev/null | head -1)
+[ -z "$FP" ] && FP=ffplay
+out=$(mktemp /tmp/sd-edge-tts-XXXXXX.mp3)
+if "$ETTS" --voice "$voice" --text "$text" --write-media "$out" 2>/dev/null && [ -s "$out" ]; then
+    "$FP" -nodisp -autoexit -loglevel error "$out"
+    rc=$?
+else
+    # network failed -> fall back so Firefox still speaks
+    case "$voice" in
+        zh-*) espeak-ng -v zh -s 150 "$text" 2>/dev/null ;;
+        *)    espeak-ng -v en-us -s 160 "$text" 2>/dev/null ;;
+    esac
+    rc=$?
+fi
+rm -f "$out"
+exit $rc

@@ -1,0 +1,26 @@
+#!/bin/bash
+# Apple 键盘背光控制 (F5/F6 -> XF86KbdBrightnessDown/Up)
+# 强制走 systemd 用户总线：dwm 继承的旧 /tmp/dbus-* 地址已死，dunstify 会静默失败
+export DBUS_SESSION_BUS_ADDRESS="unix:path=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/bus"
+LED=/sys/class/leds/smc::kbd_backlight
+MAX=$(cat "$LED/max_brightness")
+STEP=51   # 255/5 档
+
+case "$1" in
+up)
+	cur=$(cat "$LED/brightness")
+	new=$((cur + STEP)); [ $new -gt $MAX ] && new=$MAX
+	;;
+down)
+	cur=$(cat "$LED/brightness")
+	new=$((cur - STEP)); [ $new -lt 0 ] && new=0
+	;;
+*)
+	exit 1
+	;;
+esac
+
+echo "$new" > "$LED/brightness" 2>/dev/null || { dunstify -a "kbdbacklight" "背光写入失败(需在 input 组)" -t 2000; exit 1; }
+
+pct=$(( new * 100 / MAX ))
+dunstify -a "kbdbacklight" -u low -r 9992 -h int:value:"$pct" -i "keyboard" "键盘背光: ${pct}%" -t 1500

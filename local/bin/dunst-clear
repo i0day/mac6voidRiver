@@ -1,0 +1,6 @@
+#!/bin/bash
+# dunst-clear: 清空当前所有通知
+export DBUS_SESSION_BUS_ADDRESS="unix:path=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/bus"
+dunstctl count history >/dev/null 2>&1 || exit 1
+dunstctl close-all
+dunstify -a dunst-clear -u low -t 1000 "🧹 通知已清空"

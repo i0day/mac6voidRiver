@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+echo "$(date +%H:%M:%S) saysel invoked" >> /tmp/reader-debug.log
+# 朗读选中的文字（真人神经语音）
+# 优先 X 主选择区（鼠标选中即有），退回剪贴板
+text="$(xclip -o -selection primary 2>/dev/null)"
+[ -z "$text" ] && text="$(xclip -o -selection clipboard 2>/dev/null)"
+[ -z "$text" ] && { notify-send -t 2500 "朗读" "没有选中文字"; exit 0; }
+# 截太长内容，避免一次合成过大
+text="$(printf '%s' "$text" | head -c 2000)"
+# 后台朗读，不占用热键
+nohup ~/.local/bin/sd-edge-tts "$text" >/dev/null 2>&1 &
+notify-send -t 2000 "朗读" "开始朗读选中内容（Esc 可停：pkill -f sd-edge-tts）"

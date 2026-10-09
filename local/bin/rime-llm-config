@@ -1,0 +1,3670 @@
+#!/usr/bin/env python3
+# 描述： Rime LLM Translator 综合配置工具 (Main Menu + SearchModels 混合架构)
+
+import os
+os.environ.setdefault('ESCDELAY', '25')
+
+import curses
+import json
+import urllib.request
+import urllib.error
+import unicodedata
+import locale
+import threading
+import sys
+import shutil
+import datetime
+import subprocess
+import re
+import tempfile
+import time
+import select
+import base64
+import hashlib
+
+# ==========================================
+# 🌐 国际化与双语支持 (I18N)
+# ==========================================
+locale.setlocale(locale.LC_ALL, '')
+
+def is_chinese_env():
+    lang = os.environ.get("LC_ALL") or os.environ.get("LANG") or ""
+    if lang.lower().startswith("zh"): return True
+    try:
+        loc = locale.getlocale()[0] or ""
+        return loc.lower().startswith("zh")
+    except Exception: return False
+
+LANG = "zh" if is_chinese_env() else "en"
+
+I18N = {
+    "en": {
+        # CLI
+        "cli_help_title": "Usage: rime-llm-config [COMMAND]\n\nCommands:",
+        "cli_help_tui": "  (empty) / tui    : Open the TUI Configuration Manager.",
+        "cli_help_init": "  init             : Initialize Rime and restart Fcitx5.",
+        "cli_help_sync": "  sync             : Sync configurations to Lua.",
+        "cli_help_stat": "  status           : Show current configuration info.",
+        "cli_help_debug": "  debug            : Start real-time debug monitor.",
+        "cli_help_ask": "  ask <text>       : One-shot answer via the active node (used by Lua for CLI backends).",
+        "cli_help_chat": "  chat <text>      : Talk to Miyu's fixed session (used by Lua for the `miyu:` prefix).",
+        "cli_help_catalog": "  catalog          : Refresh the models.dev model catalog cache.",
+        "cli_help_usage": "  usage [--reset]  : Show (or clear) the token usage counters.",
+        "cli_help_reset_prompt": "  reset-prompt     : Restore the system prompt to the shipped default.",
+        "cli_help_h": "  -h / --help      : Show this help message.",
+        "cli_bk_create": "Backup created at: {}",
+        "cli_fcitx_not_run": "Fcitx5 is not currently running. Deployment skipped.",
+        "cli_fcitx_restarting": "Fcitx5 is running. Attempting to restart...",
+        "cli_fcitx_ok_sysd": "Fcitx5 restarted via systemd. Rime deployed.",
+        "cli_fcitx_ok_cli": "Fcitx5 restarted via CLI. Rime deployed.",
+        "cli_fcitx_fail": "Failed to restart Fcitx5 automatically: {}",
+        "cli_tut_title": "Rime-LLM Translator Initialization Complete! Quick Start Guide",
+        "cli_tut_1": "1. Test Connect: Type test{}. If you see success msg, it works.",
+        "cli_tut_2": "2. Wake up AI : Type pinyin and press [{}].",
+        "cli_tut_2_ex": "(e.g., nihaoshijie{})",
+        "cli_tut_3": "3. Config GUI : Run `rime-llm-config` in terminal.",
+        "cli_tut_3_ex": "Supports model switching, custom vocab, parameter editing, etc.",
+        "cli_init_start": "Start initializing Rime-LLM Translator...",
+        "cli_init_mkdir": "Creating missing directory: {}",
+        "cli_init_gen_config": "Generating default configuration...",
+        "cli_init_ok_config": "Default configuration generated at: {}",
+        "cli_init_ok_lua": "Successfully appended module registration to rime.lua.",
+        "cli_init_upg_lua": "rime.lua upgraded: processor registration appended.",
+        "cli_init_skip_lua": "rime.lua already configured. Skipped.",
+        "cli_init_new_lua": "Created rime.lua and injected registration code.",
+        "cli_init_ice_det": "Detected Rime Ice (rime_ice) schema.",
+        "cli_init_ok_yaml": "Successfully appended LLM patch to rime_ice.custom.yaml.",
+        "cli_init_upg_yaml": "rime_ice.custom.yaml upgraded: processor patch added.",
+        "cli_init_skip_yaml": "rime_ice.custom.yaml already patched. Skipped.",
+        "cli_init_new_yaml": "Created rime_ice.custom.yaml with LLM patch.",
+        "cli_init_no_ice": "Rime Ice not detected. Please manually patch your custom.yaml.",
+        "cli_sync_ok": "Sync successful. Lua config exported to: {}",
+        "cli_catalog_ok": "Model catalog refreshed: {} providers → {}",
+        "cli_catalog_fail": "Failed to refresh model catalog: {}",
+        "cli_stat_prof": "Active Profile :",
+        "cli_stat_model": "Active Model   :",
+        "cli_stat_proto": "Protocol       :",
+        "cli_stat_think": "Thinking       :",
+        "cli_stat_extra": "Request extra  :",
+        "cli_stat_state": "State File     :",
+        "cli_stat_lua": "Lua Config     :",
+        "cli_stat_miyu": "Miyu chat",
+        "cli_stat_saver": "Token saving",
+        "cli_usage_title": "[ Token usage ]",
+        "cli_usage_none": "No requests recorded yet. Type something with the AI trigger first.",
+        "cli_usage_since": "Counting since",
+        "cli_usage_req": "Requests",
+        "cli_usage_in": "Input tokens",
+        "cli_usage_out": "Output tokens",
+        "cli_usage_avg": "Average input / request",
+        "cli_usage_billed": "Billed-equivalent input (cache at 0.1x)",
+        "cli_usage_recent": "Recent requests",
+        "cli_usage_reset": "Usage counters cleared.",
+        "cli_err_cmd": "Unknown command: {}",
+
+        # TUI Main
+        "tui_main_title": " RIME LLM Config Manager ",
+        "tui_opt_switch": "Switch Profile (Current: {})",
+        "tui_opt_edit": "Providers & Models",
+        "tui_opt_settings": "Global Settings",
+        "tui_opt_vocab": "Custom Vocabulary",
+        "tui_opt_export": "Save & Exit",
+
+        # TUI Switch
+        "tui_sw_title": " Select Profile ",
+        "tui_sw_err": "No fully configured profiles found.\nPlease edit API URL, Key and Select Model first (CLI backends only need a model).",
+
+        # TUI Settings
+        "tui_st_title": " Global Settings ",
+        "tui_st_prompt": "System Prompt",
+        "tui_st_trigger": "AI Trigger Key",
+        "tui_st_tokens": "Max Tokens",
+        "tui_st_temp": "Temperature",
+        "tui_st_time": "Max Time (s)",
+        "tui_st_cli_timeout": "CLI backend timeout (s)",
+        "tui_st_history_bytes": "History Capacity (Bytes)",
+        "tui_st_miyu_prefix": "Chat prefix (empty=off)",
+        "tui_st_miyu_session": "Session name",
+        "tui_st_miyu_timeout": "Timeout (s)",
+        "tui_st_miyu_wait": "Inline wait (s)",
+        "tui_st_miyu_tools": "May use tools",
+        "tui_st_miyu_prompt": "Host instructions",
+        "tui_st_miyu_binary": "miyu path (empty=auto)",
+        "tui_yes": "Yes",
+        "tui_no": "No",
+        "tui_opt_miyu": "Chat with Miyu  [{}]",
+        "tui_miyu_title": " Chat with Miyu ",
+        "tui_miyu_off": "off",
+        "tui_miyu_bad": "Miyu is not usable right now:\n{}\n\nSettings are still editable.",
+
+        # TUI Token saving
+        "tui_opt_saver": "Token Saving & Cache",
+        "tui_opt_prefix": "Prefix Behaviors",
+        "tui_px_title": " Prefix Behaviors ",
+        "tui_px_opt_rules": "Prefix rules",
+        "tui_px_opt_combo": "Combining prefixes",
+        "tui_px_opt_fallback": "Unknown prefixes (fallback)",
+        "tui_px_opt_pos": "Where rules are injected",
+        "tui_px_rules_title": " Prefix Rules ",
+        "tui_px_add": "+ Add a prefix",
+        "tui_px_fm_add": " Add Prefix ",
+        "tui_px_fm_edit": " Edit Prefix ",
+        "tui_px_combo_title": " Combining Prefixes ",
+        "tui_px_fallback_title": " Unknown Prefix Fallback ",
+        "tui_px_pos_title": " Rule Injection Point ",
+        "tui_lbl_prefix": "Prefix",
+        "tui_px_key_hint": "Lowercase letters only, without the colon. Example: kr",
+        "tui_lbl_rule": "Rule",
+        "tui_px_bad_key": "A prefix must be lowercase letters only, without the colon.\nExample: kr",
+        "tui_px_pos_system": "End of system prompt",
+        "tui_px_pos_before": "In the user message, before the input",
+        "tui_px_pos_after": "In the user message, after the input",
+        "tui_px_fallback_hint": "{p} is replaced with the unrecognised prefix. Leave empty to disable.",
+        "cli_migrated": "Prefix rules moved out of the system prompt into their own config (state.json backed up).",
+        "tui_sv_title": " Token Saving & Cache ",
+        "tui_sv_prefix": "Prefix rules in prompt",
+        "tui_sv_vocab": "Custom vocabulary",
+        "tui_sv_nohist": "Prefixes sent without history",
+        "tui_sv_adaptive": "Adaptive output cap",
+        "tui_sv_mark": "Mark prompt cacheable (Anthropic)",
+        "tui_sv_disk": "Reuse results across sessions",
+        "tui_sv_disk_min": "Min pinyin length to cache",
+        "tui_sv_disk_max": "Max cached results",
+        "tui_sv_reset": "Restore the slim default prompt",
+        "tui_inject_auto": "On demand",
+        "tui_inject_all": "Always send all",
+        "tui_sv_reset_done": "System prompt restored to the shipped default.",
+        "chat_bg": "still thinking after {}s, handed off; you will get a notification",
+        "chat_bg_lost": "the background worker returned nothing",
+        "chat_notify_ok": "Miyu",
+        "chat_notify_err": "Miyu (failed)",
+
+        # TUI Vocab
+        "tui_vc_title": " Custom Vocabulary ",
+        "tui_vc_opt_term": "English Terms (Prevent Segmentation)",
+        "tui_vc_opt_map": "Pinyin Abbreviation Mappings",
+        "tui_vc_term_title": " English Terms ",
+        "tui_vc_map_title": " Pinyin Mappings ",
+        "tui_vc_add_term": "+ Add New Term",
+        "tui_vc_add_map": "+ Add New Mapping",
+        "tui_vc_fm_add_term": " Add Term ",
+        "tui_vc_fm_edit_term": " Edit Term ",
+        "tui_vc_fm_add_map": " Add Mapping ",
+        "tui_vc_fm_edit_map": " Edit Mapping ",
+        "tui_lbl_term": "Term Content",
+        "tui_lbl_pinyin": "Pinyin Letters",
+        "tui_lbl_result": "Actual Output",
+
+        # TUI Export
+        "tui_exp_succ": " Success ",
+        "tui_exp_err": " Error ",
+        "tui_exp_msg": "Configuration saved to:\n{}\n\nPlease redeploy your Rime!",
+
+        # TUI Forms & Buttons
+        "tui_btn_save": "[ Save ]",
+        "tui_btn_cancel": "[ Cancel ]",
+        "tui_btn_del": "[ Delete ]",
+        "tui_btn_ok": " [Enter] OK ",
+        "tui_hint_menu": "[Enter]Select [q]Back",
+        "tui_hint_menu_del": "[Enter]Edit  [d]Delete  [u]Undo  [q]Back",
+        "tui_hint_search": " [/]Search",
+        "tui_menu_no_match": "No matches",
+        "tui_hint_form_nav": " [j/k]Nav [h/l]Switch Btn [i/Enter]Edit [q]Cancel ",
+        "tui_hint_form_edit": " [←/→]Move Cursor  [Enter/Esc]Done ",
+        "tui_hint_textarea": "[Enter] Open External Editor  [Esc/q] Cancel",
+        "tui_placeholder_ta": "(Press Enter to edit in Vim/Nano)",
+
+        # TUI SearchModels
+        "tui_sm_prov": " Providers ",
+        "tui_sm_org": " Organizations ",
+        "tui_sm_mod": " Available Models ",
+        "tui_sm_mod_srch": " Available Models (Search: {}) ",
+        "tui_sm_fetch": "Fetching models from API...",
+        "tui_sm_err": "✗ Fetch failed: {}",
+        "tui_sm_err_id_invalid": "✗ Invalid Profile ID (letters, digits, underscore only)",
+        "tui_sm_err_id_exist": "✗ Profile ID already exists!",
+        "tui_sm_no_mod": "No models found.",
+        "tui_sm_srch": " Search: {}_ (Enter to confirm) ",
+        "tui_sm_nav": "[Esc/q]Back [/]Search [r]Refresh [a]Add [d]Delete [h/l]Nav [i]Edit [Enter]Set Model [t]Thinking",
+        "tui_sm_add_prov": " Add Provider ",
+        "tui_sm_edit_prov": " Edit Profile: {} ",
+        "tui_sm_lbl_id": "Profile ID",
+        "tui_sm_lbl_name": "Display Name",
+        "tui_sm_lbl_url": "API URL",
+        "tui_sm_lbl_key": "API Key",
+        "tui_sm_lbl_protocol": "Protocol",
+        "tui_sm_lbl_binary": "Executable (binary)",
+        "tui_sm_set_succ": "✓ Set '{}' as the default model for {}!",
+        "tui_sm_think_title": " Thinking: {} ",
+        "tui_sm_think_set": "✓ Thinking for {} set to {}",
+        "tui_sm_think_none": "This model has no selectable thinking level.",
+        "tui_sm_think_tag": "thinking: {}",
+        "tui_sm_think_mark": "[think]",
+        "tui_sm_catalog": "Downloading models.dev catalog...",
+        "tui_sm_catalog_ok": "models.dev catalog updated ({} providers)",
+        "tui_sm_catalog_fail": "models.dev catalog unavailable, using built-in heuristics",
+        "tui_sm_err_external": "Imported node ({}); only model and thinking level can be changed here.",
+        "tui_sm_err_ext_del": "Imported nodes come back on next launch; uninstall the CLI or disable it in Miyu.",
+        "tui_sm_tag_cli": "CLI",
+        "tui_sm_tag_miyu": "Miyu",
+        "msg_info": " Info ",
+        "proto_auto": "Auto (by URL)",
+        "proto_openai": "OpenAI Chat",
+        "proto_anthropic": "Anthropic Messages",
+    },
+    "zh": {
+        # CLI
+        "cli_help_title": "用法: rime-llm-config [命令]\n\n可用命令:",
+        "cli_help_tui": "  (留空) / tui     : 启动图形化(TUI)配置管理器",
+        "cli_help_init": "  init             : 初始化",
+        "cli_help_sync": "  sync             : 同步配置",
+        "cli_help_stat": "  status           : 显示当前配置信息",
+        "cli_help_debug": "  debug            : 启动实时调试监控，并开启日志记录",
+        "cli_help_ask": "  ask <文本>       : 用当前节点做一次性问答(Lua 侧走本机 CLI 后端时调用)",
+        "cli_help_chat": "  chat <文本>      : 跟 Miyu 的固定会话聊一句(Lua 侧遇到 `miyu:` 前缀时调用)",
+        "cli_help_catalog": "  catalog          : 刷新 models.dev 模型目录缓存",
+        "cli_help_usage": "  usage [--reset]  : 查看（或清空）token 用量统计。",
+        "cli_help_reset_prompt": "  reset-prompt     : 把提示词恢复为程序自带的默认版本。",
+        "cli_help_h": "  -h / --help      : 显示此帮助信息",
+        "cli_bk_create": "已创建配置文件备份: {}",
+        "cli_fcitx_not_run": "检测到 Fcitx5 未运行，跳过自动部署。",
+        "cli_fcitx_restarting": "检测到 Fcitx5 运行中，正在尝试重启以部署配置...",
+        "cli_fcitx_ok_sysd": "已通过 Systemd 成功重启 Fcitx5，Rime 部署完毕。",
+        "cli_fcitx_ok_cli": "已通过命令行指令重启 Fcitx5，Rime 部署完毕。",
+        "cli_fcitx_fail": "自动重启 Fcitx5 失败: {}",
+        "cli_tut_title": "Rime-LLM Translator 初始化完成！快速上手指南",
+        "cli_tut_1": "1. 测试连通性 : 输入 test{}，若候选词出现挂载成功说明正常",
+        "cli_tut_2": "2. 唤醒大模型 : 正常输入拼音后，输入 [{}] 键呼出 AI 联想",
+        "cli_tut_2_ex": "(例如输入 nihaoshijie{})",
+        "cli_tut_3": "3. 更改配置项 : 随时在终端执行 `rime-llm-config` 打开图形界面",
+        "cli_tut_3_ex": "支持热切换模型、自定义词库、修改参数或触发键等功能",
+        "cli_init_start": "开始初始化 Rime-LLM Translator...",
+        "cli_init_mkdir": "正在创建缺失的目录: {}",
+        "cli_init_gen_config": "正在生成默认配置...",
+        "cli_init_ok_config": "已生成默认配置至: {}",
+        "cli_init_ok_lua": "已成功向 rime.lua 追加模块注册代码。",
+        "cli_init_upg_lua": "rime.lua 已升级：补上了 processor 注册。",
+        "cli_init_skip_lua": "rime.lua 已配置过，跳过注入。",
+        "cli_init_new_lua": "已创建 rime.lua 并写入注册代码。",
+        "cli_init_ice_det": "检测到 雾凇拼音 (rime_ice) 方案。",
+        "cli_init_ok_yaml": "已向 rime_ice.custom.yaml 成功追加 LLM 补丁。",
+        "cli_init_upg_yaml": "rime_ice.custom.yaml 已升级：补上了 processor 补丁。",
+        "cli_init_skip_yaml": "rime_ice.custom.yaml 已打过补丁，跳过。",
+        "cli_init_new_yaml": "已新建 rime_ice.custom.yaml 并写入 LLM 补丁。",
+        "cli_init_no_ice": "未检测到雾凇拼音。如使用其他方案，请手动修改对应的 custom.yaml。",
+        "cli_sync_ok": "同步成功。已将 Lua 配置导出至: {}",
+        "cli_catalog_ok": "模型目录已刷新：{} 个供应商 → {}",
+        "cli_catalog_fail": "刷新模型目录失败: {}",
+        "cli_stat_prof": "当前生效节点 :",
+        "cli_stat_model": "当前生效模型 :",
+        "cli_stat_proto": "协议         :",
+        "cli_stat_think": "思考档位     :",
+        "cli_stat_extra": "请求附加字段 :",
+        "cli_stat_state": "JSON状态文件 :",
+        "cli_stat_lua": "Lua 配置路径 :",
+        "cli_stat_miyu": "Miyu 聊天",
+        "cli_stat_saver": "省 token",
+        "cli_usage_title": "[ token 用量 ]",
+        "cli_usage_none": "还没有记录。先用触发键打一句试试。",
+        "cli_usage_since": "统计起始",
+        "cli_usage_req": "请求数",
+        "cli_usage_in": "输入 token",
+        "cli_usage_out": "输出 token",
+        "cli_usage_avg": "平均每次输入",
+        "cli_usage_billed": "计费等效输入 (缓存按 0.1x)",
+        "cli_usage_recent": "最近的请求",
+        "cli_usage_reset": "用量统计已清空。",
+        "cli_err_cmd": "未知的命令: {}",
+
+        # TUI Main
+        "tui_main_title": " RIME LLM 配置工具 ",
+        "tui_opt_switch": "激活配置 (当前: {})",
+        "tui_opt_edit": "供应商和模型",
+        "tui_opt_settings": "全局参数设置",
+        "tui_opt_vocab": "自定义词库",
+        "tui_opt_export": "保存并退出",
+
+        # TUI Switch
+        "tui_sw_title": " 选择配置 ",
+        "tui_sw_err": "未找到配置完整的节点。\n请先前往【编辑配置】填写 URL、密钥并设置模型（本机 CLI 节点只需设模型）。",
+
+        # TUI Settings
+        "tui_st_title": " 全局参数设置 ",
+        "tui_st_prompt": "提示词 (Prompt)",
+        "tui_st_trigger": "触发键 (Trigger)",
+        "tui_st_tokens": "最大输出词元 (Tokens)",
+        "tui_st_temp": "发散度 (Temperature)",
+        "tui_st_time": "回复超时 (Max Time)",
+        "tui_st_cli_timeout": "CLI 后端超时 (秒)",
+        "tui_st_history_bytes": "历史上下文容量 (Bytes)",
+        "tui_st_miyu_prefix": "聊天前缀 (留空关闭)",
+        "tui_st_miyu_session": "会话名",
+        "tui_st_miyu_timeout": "回复超时 (秒)",
+        "tui_st_miyu_wait": "输入法等待 (秒)",
+        "tui_st_miyu_tools": "允许她使用工具",
+        "tui_st_miyu_prompt": "宿主指令",
+        "tui_st_miyu_binary": "miyu 路径 (留空自动)",
+        "tui_yes": "是",
+        "tui_no": "否",
+        "tui_opt_miyu": "跟 Miyu 聊天  [{}]",
+        "tui_miyu_title": " 跟 Miyu 聊天 ",
+        "tui_miyu_off": "已关闭",
+        "tui_miyu_bad": "现在还用不了 Miyu：\n{}\n\n设置仍然可以先填好。",
+
+        # TUI 省 token
+        "tui_opt_saver": "省 token 与缓存",
+        "tui_opt_prefix": "前缀行为",
+        "tui_px_title": " 前缀行为 ",
+        "tui_px_opt_rules": "前缀规则",
+        "tui_px_opt_combo": "前缀组合规则",
+        "tui_px_opt_fallback": "未知前缀兜底",
+        "tui_px_opt_pos": "规则注入位置",
+        "tui_px_rules_title": " 前缀规则 ",
+        "tui_px_add": "+ 添加新前缀",
+        "tui_px_fm_add": " 添加前缀 ",
+        "tui_px_fm_edit": " 编辑前缀 ",
+        "tui_px_combo_title": " 前缀组合规则 ",
+        "tui_px_fallback_title": " 未知前缀兜底 ",
+        "tui_px_pos_title": " 规则注入位置 ",
+        "tui_lbl_prefix": "前缀",
+        "tui_px_key_hint": "只要小写字母，不带冒号。例如：kr",
+        "tui_lbl_rule": "规则",
+        "tui_px_bad_key": "前缀只能是小写字母，不要带冒号。\n例如：kr",
+        "tui_px_pos_system": "系统提示词末尾",
+        "tui_px_pos_before": "用户消息里，输入之前",
+        "tui_px_pos_after": "用户消息里，输入之后",
+        "tui_px_fallback_hint": "{p} 会被替换成认不出的那个前缀。留空则关闭兜底。",
+        "cli_migrated": "前缀规则已从提示词里拆出来，存进独立配置（state.json 已备份）。",
+        "tui_sv_title": " 省 token 与缓存 ",
+        "tui_sv_prefix": "提示词里的前缀规则",
+        "tui_sv_vocab": "自定义词库",
+        "tui_sv_nohist": "不带上文的前缀",
+        "tui_sv_adaptive": "自适应输出上限",
+        "tui_sv_mark": "标记提示词可缓存 (Anthropic)",
+        "tui_sv_disk": "跨会话复用结果",
+        "tui_sv_disk_min": "进缓存的最短拼音",
+        "tui_sv_disk_max": "缓存条数上限",
+        "tui_sv_reset": "恢复精简版默认提示词",
+        "tui_inject_auto": "按需注入",
+        "tui_inject_all": "每次全发",
+        "tui_sv_reset_done": "提示词已恢复为程序自带的默认版本。",
+        "chat_bg": "{}秒还没答完，已转后台，答完弹通知",
+        "chat_bg_lost": "后台没有返回内容",
+        "chat_notify_ok": "Miyu",
+        "chat_notify_err": "Miyu（失败）",
+
+        # TUI Vocab
+        "tui_vc_title": " 自定义词库 ",
+        "tui_vc_opt_term": "常用英文词 (防错分)",
+        "tui_vc_opt_map": "拼音缩写映射",
+        "tui_vc_term_title": " 常用英文词 ",
+        "tui_vc_map_title": " 拼音缩写映射 ",
+        "tui_vc_add_term": "+ 添加新名词",
+        "tui_vc_add_map": "+ 添加新映射",
+        "tui_vc_fm_add_term": " 添加名词 ",
+        "tui_vc_fm_edit_term": " 编辑名词 ",
+        "tui_vc_fm_add_map": " 添加映射 ",
+        "tui_vc_fm_edit_map": " 编辑映射 ",
+        "tui_lbl_term": "名词内容",
+        "tui_lbl_pinyin": "拼音字母",
+        "tui_lbl_result": "实际输出结果",
+
+        # TUI Export
+        "tui_exp_succ": " 成功 ",
+        "tui_exp_err": " 错误 ",
+        "tui_exp_msg": "配置已成功保存至:\n{}\n\n请重新部署(Deploy)您的 Rime 拼音！",
+
+        # TUI Forms & Buttons
+        "tui_btn_save": "[ 保存 ]",
+        "tui_btn_cancel": "[ 取消 ]",
+        "tui_btn_del": "[ 删除 ]",
+        "tui_btn_ok": " [回车] 确定 ",
+        "tui_hint_menu": "[Enter]选择 [q]返回",
+        "tui_hint_menu_del": "[Enter]编辑  [d]删除  [u]撤销  [q]返回",
+        "tui_hint_search": " [/]搜索",
+        "tui_menu_no_match": "无匹配项",
+        "tui_hint_form_nav": " [j/k]上下选择 [h/l]切换按钮 [i/Enter]编辑 [q]取消 ",
+        "tui_hint_form_edit": " [←/→]左右切换/移动光标  [Enter/Esc]完成 ",
+        "tui_hint_textarea": "[Enter] 打开外部编辑器(Vim)  [Esc/q] 取消",
+        "tui_placeholder_ta": "(请按 Enter 调用 Vim/Nano 进行编辑)",
+
+        # TUI SearchModels
+        "tui_sm_prov": " 供应商 ",
+        "tui_sm_org": " 组织 ",
+        "tui_sm_mod": " 可用模型 ",
+        "tui_sm_mod_srch": " 可用模型 (搜索: {}) ",
+        "tui_sm_fetch": "正在向 API 获取模型列表...",
+        "tui_sm_err": "✗ 获取失败: {}",
+        "tui_sm_err_id_invalid": "✗ 配置ID无效 (仅限字母、数字、下划线)",
+        "tui_sm_err_id_exist": "✗ 该配置ID已存在！",
+        "tui_sm_no_mod": "未找到模型。",
+        "tui_sm_srch": " 搜索: {}_ (回车确认) ",
+        "tui_sm_nav": "[Esc/q]返回 [/]搜索 [r]刷新 [a]新增 [d]删除 [h/l]导航 [i]编辑 [Enter]设为首选模型 [t]思考档位",
+        "tui_sm_add_prov": " 新增供应商 ",
+        "tui_sm_edit_prov": " 编辑配置: {} ",
+        "tui_sm_lbl_id": "配置ID(英文)",
+        "tui_sm_lbl_name": "显示名称",
+        "tui_sm_lbl_url": "API 地址",
+        "tui_sm_lbl_key": "API 密钥",
+        "tui_sm_lbl_protocol": "协议 (Protocol)",
+        "tui_sm_lbl_binary": "可执行文件 (binary)",
+        "tui_sm_set_succ": "✓ 已将 '{}' 设为 {} 的首选模型！",
+        "tui_sm_think_title": " 思考档位: {} ",
+        "tui_sm_think_set": "✓ {} 的思考档位已设为 {}",
+        "tui_sm_think_none": "该模型没有可选的思考档位。",
+        "tui_sm_think_tag": "思考: {}",
+        "tui_sm_think_mark": "[思考]",
+        "tui_sm_catalog": "正在下载 models.dev 模型目录...",
+        "tui_sm_catalog_ok": "models.dev 模型目录已更新（{} 个供应商）",
+        "tui_sm_catalog_fail": "models.dev 目录不可用，按内置规则推断思考档位",
+        "tui_sm_err_external": "该节点为自动导入({})，此处只能改模型和思考档位。",
+        "tui_sm_err_ext_del": "自动导入的节点下次启动会回来；请卸载对应 CLI 或在 Miyu 里禁用它。",
+        "tui_sm_tag_cli": "CLI",
+        "tui_sm_tag_miyu": "Miyu",
+        "msg_info": " 提示 ",
+        "proto_auto": "自动 (按 URL 判断)",
+        "proto_openai": "OpenAI Chat",
+        "proto_anthropic": "Anthropic Messages",
+    }
+}
+
+def t(key, *args):
+    s = I18N[LANG].get(key, key)
+    if args: return s.format(*args)
+    return s
+
+# ==========================================
+# 📂 路径
+# ==========================================
+SYSTEM_DEFAULT_CONFIG = "/usr/share/rime-llm-translator/default_state.json"
+SCRIPT_DIR = os.path.dirname(os.path.realpath(sys.argv[0]))
+LOCAL_DEFAULT_CONFIG = os.path.join(SCRIPT_DIR, "default_state.json")
+CONFIG_DIR = os.environ.get("RIME_LLM_CONFIG_DIR") or os.path.expanduser("~/.config/rime-llm-translator")
+STATE_FILE = os.path.join(CONFIG_DIR, "state.json")
+LUA_FILE = os.path.join(CONFIG_DIR, "config.lua")
+CACHE_DIR = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "rime-llm-translator")
+MODELS_CACHE_DIR = os.path.join(CACHE_DIR, "models")
+CATALOG_FILE = os.path.join(CACHE_DIR, "models_dev.json")
+CATALOG_URL = "https://models.dev/api.json"
+CATALOG_TTL = 86400
+BACKUP_DIR = os.path.join(CACHE_DIR, "backup")
+RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR") or ""
+RUNTIME_TMP_DIR = os.path.join(RUNTIME_DIR, "rime-llm-translator") if RUNTIME_DIR else ""
+CONFIG_TMP_DIR = os.path.join(CONFIG_DIR, "tmp")
+DEBUG_FLAG = os.path.join(RUNTIME_DIR or CACHE_DIR, "rime-llm-debug.flag")
+DEBUG_LOG = os.path.join(CACHE_DIR, "debug.log")
+# 本机可能同时装着包管理器的旧版和自编译的新版，探测结果按 (路径, mtime, 大小) 缓存
+MIYU_CAPS_FILE = os.path.join(CACHE_DIR, "miyu_caps.json")
+CHAT_LAST_FILE = os.path.join(CACHE_DIR, "last_chat.txt")
+REPLY_CACHE_FILE = os.path.join(CACHE_DIR, "replies.json")
+USAGE_FILE = os.path.join(CACHE_DIR, "usage.json")
+MIYU_HOME = os.environ.get("MIYU_HOME", os.path.expanduser("~/.miyu"))
+MIYU_CONFIG = os.path.join(MIYU_HOME, "config", "config.jsonc")
+MIYU_CATALOG = os.path.join(MIYU_HOME, "cache", "models_cache.json")
+MIYU_THINKING = os.path.join(MIYU_HOME, "state", "thinking-variants.json")
+DEFAULT_CLI_TIMEOUT = 60.0
+
+# 省 token：提示词里随输入变化的部分（前缀规则、命中的词库）按需注入，常驻核心保持恒定，
+# 供应商的前缀缓存（DeepSeek/OpenAI 自动、Anthropic 显式标记）才咬得住。
+DEFAULT_HISTORY_BYTES = 120
+DEFAULT_NO_HISTORY_PREFIXES = "call,cmd,sh"
+DEFAULT_REPLY_CACHE_MAX = 500
+DEFAULT_REPLY_CACHE_MIN_LEN = 8
+# 前缀行为：以前是提示词 markdown 里的几行字，程序靠行首形状去切；现在程序要按前缀决定
+# 注入什么，前缀就是一等公民了，改成独立的有序表——加一条 `kr:` 不用再懂 markdown 格式。
+# 规则文本一律约束**输出**（"只输出日文译文"），别描述过程（"转成中文再翻译成日文"）——
+# 后者字面上是两步，模型会把中间的中文也吐出来。
+PREFIX_RULES_HEAD = "# 本次要求"
+PREFIX_POSITIONS = ("system", "user_before", "user_after")
+# 实测（deepseek-flash，33 次采样）：规则贴在输入之后 33/33，贴在输入之前 27/33，
+# 放系统提示词末尾 12/15——紧跟输入的位置才压得住开头"你是拼音输入法引擎"那句定性。
+DEFAULT_PREFIX_POSITION = "user_after"
+DEFAULT_PREFIXES = [
+    ("call", "不要输出拼音转换的结果。把还原出的句子当作用户向你提出的问题，直接输出答案本身，不说废话。"),
+    ("cn", "正常执行拼音转换，输出中文。"),
+    ("eng", "只输出英文译文。不要输出中间的中文，不要附带原文。"),
+    ("jp", "只输出日文译文。不要输出中间的中文，不要附带原文。"),
+    ("cmd", "不要输出拼音转换的结果。把还原出的句子当作需求，只输出可直接运行的命令本身，前后不许有解释、说明或代码块标记。"),
+    ("sh", "不要输出拼音转换的结果。把还原出的句子当作需求，只输出 shell 脚本正文，不要用代码块包裹，不要任何解释。"),
+    ("moe", "把结果改写成猫娘的语气和用词，只输出改写后的结果。"),
+]
+DEFAULT_PREFIX_COMBO = (
+    "多个前缀可以组合，请举一反三：`jpmoe:`（或 `moejp:`）是日文译文加猫娘语气；"
+    "`moesh:` 是生成脚本且注释用猫娘语气。多个语言前缀表示分行输出，每行一种语言，"
+    "顺序与前缀顺序一致（`jpcnrs:` 即第一行日文、第二行中文、第三行俄文），"
+    "行首不许出现“日文：”这类标签。前缀也可以拆开写，`jp:moe:` 等价于 `jpmoe:`。"
+)
+# 迁移时用来判断用户有没有改过：跟这里一字不差就换成上面重写过的版本，改过就原样保留。
+LEGACY_PREFIX_RULES = {
+    "call": "说明用户需要解决问题。请立即切换为“不说废话直接给结果的帮助模式”，不要输出从拼音转换出的句子，而是将句子作为prompt再次进行生成，解决用户的问题。",
+    "cn": "说明用户需要中文句子结果，请正常执行拼音转换。",
+    "eng": "说明用户需要将中文句子翻译为英文句子，请立即切换为“中英翻译器”，将拼音转换成中文再次翻译为英文后输出。",
+    "jp": "说明用户需要将中文句子翻译为日文句子，请立即切换为“中日翻译器”，将拼音转换成中文再次翻译为日文后输出。",
+    "cmd": "说明用户需要命令结果，请立即切换为“命令生成器”，不要输出从拼音转换出的句子，而是将句子作为prompt再次进行生成，输出可直接运行的命令，禁止在命令上下生成客套话或非注释的解释性语句。",
+    "sh": "说明用户需要shell脚本结果，请立即切换为“shell脚本生成器”，不要输出从拼音转换出的句子，而是将句子作为用户的需求进行生成，输出纯脚本内容。禁止用代码块套住脚本，禁止在脚本前后生成“好的，这是xxx”等语句和非脚本注释的解释性语句。",
+    "moe": "说明用户想要卖萌，请立即切换为“猫娘语气转换器”，将拼音转换成中文再转换为猫娘的语气和用词。",
+}
+LEGACY_COMBO_HEAD = "不同前缀可以相互组合，同时达成多个前缀功能"
+
+DEFAULT_PREFIX_FALLBACK = (
+    "输入以 `{p}:` 开头，这是没有预先定义的前缀，请按它的字面含义处理："
+    "两个字母通常是语言代码（kr=韩语、fr=法语、de=德语、es=西班牙语、rs=俄语…），"
+    "这时只输出该语言的译文，不要输出中间的中文。前缀本身绝不能出现在输出里。"
+)
+
+TOKEN_SAVER_DEFAULTS = {
+    "prefix_position": DEFAULT_PREFIX_POSITION,
+    "prefix_inject": "auto",
+    "vocab_inject": "auto",
+    "no_history_prefixes": DEFAULT_NO_HISTORY_PREFIXES,
+    # 上限不是预留额，省不到 token，只防跑飞；而它会掐断默认思考的模型，所以默认关
+    "adaptive_max_tokens": False,
+    "prompt_cache_mark": True,
+    "reply_cache_disk": True,
+    "reply_cache_min_len": DEFAULT_REPLY_CACHE_MIN_LEN,
+    "reply_cache_max": DEFAULT_REPLY_CACHE_MAX,
+}
+
+# `miyu:` 前缀聊天：不经过当前节点，直接找 Miyu 的一个固定会话（跨调用连续）
+DEFAULT_MIYU_PREFIX = "miyu:"
+DEFAULT_MIYU_SESSION = "rime"
+DEFAULT_MIYU_TIMEOUT = 300.0
+# 内联等待多久：到点还没答完就把这一问交给后台，答案改用桌面通知送达，输入法先放行
+DEFAULT_MIYU_WAIT = 25.0
+DEFAULT_MIYU_PROMPT = (
+    "现在是用户通过 Rime 输入法在别的软件里打字时呼叫你：消息是汉语拼音，可能有错拼、漏拼、乱序，"
+    "也可能夹着英文单词。请先按语境把拼音还原成中文，再回答。\n"
+    "还原拼音时注意：\n"
+    "1. 准确还原语境中的英文词汇。\n"
+    "2. 高度重视纯首字母简拼（如 mrfz=明日方舟）。\n"
+    "3. 重视前后鼻音区分，用户可能发给你错误的前后鼻音，你要通过前后的拼音上下文做出正确的判断。\n"
+    "4. 拼音里出现数字的读音（如 yibai、san、erlingerliu、shalujiantaer、kimierdianliu），"
+    "请结合语境理解成阿拉伯数字（如 100、3、2026、杀戮尖塔2、kimi2.6）。\n"
+    "5. 拼音里没有标点，请按语境自行断句；遇到游戏、书籍、影视等作品名按《》理解。\n"
+    "你的回答会直接作为用户的打字内容上屏，所以：只回答问题本身，尽量简短，纯文本单段，"
+    "不用 Markdown、列表和标题，不要客套话，不要反问。"
+)
+
+# ==========================================
+# 🔌 协议
+# ==========================================
+# profile 的 protocol 字段（存盘值）：
+#   auto          按 api_url 判断是 OpenAI Chat 还是 Anthropic Messages（默认）
+#   openai-chat   OpenAI Chat Completions 及所有兼容端点
+#   anthropic     Anthropic Messages
+#   claude-code / codex / antigravity / opencode / miyu   本机 CLI，由 `rime-llm-config ask` 完成问答
+# 导出 config.lua 时 auto 会被解析成具体协议，Lua 侧不再猜厂商。
+CLI_BACKENDS = {
+    "claude-code": {
+        "id": "claude_code", "name": "Claude Code CLI", "binary": "claude",
+        "models": ["sonnet", "opus", "haiku", "fable"], "default": "sonnet",
+    },
+    "codex": {
+        "id": "codex", "name": "Codex CLI", "binary": "codex",
+        "models": ["gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4-mini"], "default": "gpt-5.6-terra",
+    },
+    "antigravity": {
+        "id": "antigravity", "name": "Antigravity CLI (agy)", "binary": "agy",
+        "models": ["gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low", "gemini-3.1-pro-high"],
+        "default": "gemini-3.8-flash-low",
+    },
+    "opencode": {
+        "id": "opencode_cli", "name": "opencode CLI", "binary": "opencode",
+        "models": ["opencode/big-pickle", "opencode/mimo-v2.5-free"], "default": "opencode/big-pickle",
+    },
+    "miyu": {
+        "id": "miyu", "name": "Miyu CLI", "binary": "miyu",
+        "models": ["auto"], "default": "auto",
+    },
+}
+HTTP_PROTOCOLS = ["auto", "openai-chat", "anthropic"]
+PROTOCOL_ALIASES = {
+    "": "auto", "auto": "auto",
+    "openai": "openai-chat", "openai-chat": "openai-chat", "openai-compatible": "openai-chat",
+    "anthropic": "anthropic", "anthropic-messages": "anthropic", "claude": "anthropic", "claude-messages": "anthropic",
+    "claude-code": "claude-code", "claude-code-cli": "claude-code",
+    "codex": "codex", "codex-cli": "codex",
+    "antigravity": "antigravity", "antigravity-cli": "antigravity", "agy": "antigravity",
+    "opencode": "opencode", "miyu": "miyu",
+}
+
+
+def stored_protocol(profile):
+    """profile 的协议存盘值（规范化），未知值当 auto。"""
+    return PROTOCOL_ALIASES.get(str(profile.get("protocol", "")).strip().lower(), "auto")
+
+
+def url_looks_anthropic(url):
+    u = (url or "").lower().rstrip("/")
+    return "anthropic" in u or u.endswith("/messages")
+
+
+def effective_protocol(profile):
+    """把 auto 解析成具体协议：Anthropic 看 URL，其余一律 OpenAI Chat。"""
+    proto = stored_protocol(profile)
+    if proto != "auto":
+        return proto
+    return "anthropic" if url_looks_anthropic(profile.get("api_url", "")) else "openai-chat"
+
+
+def profile_protocol(profile):
+    return effective_protocol(profile)
+
+
+def is_cli_protocol(protocol):
+    return protocol in CLI_BACKENDS
+
+
+def profile_is_cli(profile):
+    return is_cli_protocol(stored_protocol(profile))
+
+
+def profile_binary(profile):
+    protocol = stored_protocol(profile)
+    return str(profile.get("binary", "")).strip() or CLI_BACKENDS.get(protocol, {}).get("binary", "")
+
+
+def profile_tag(profile):
+    if profile.get("source") == "miyu":
+        return t("tui_sm_tag_miyu")
+    if profile_is_cli(profile):
+        return t("tui_sm_tag_cli")
+    return ""
+
+
+def profile_is_usable(profile):
+    """能否被设为激活节点：CLI 节点只要有模型，HTTP 节点要 URL + Key + 模型。"""
+    if not profile.get("model"):
+        return False
+    if profile_is_cli(profile):
+        return True
+    return bool(profile.get("api_url") and profile.get("api_key"))
+
+
+def protocol_label(proto):
+    return {"auto": t("proto_auto"), "openai-chat": t("proto_openai"), "anthropic": t("proto_anthropic")}.get(proto, proto)
+
+
+def protocol_from_label(label):
+    for proto in HTTP_PROTOCOLS:
+        if protocol_label(proto) == label:
+            return proto
+    return "auto"
+
+
+# ==========================================
+# 思考档位：按「节点 + 模型」存 id
+# ==========================================
+# profile["thinking"] = {"<model>": "<variant id>"}；id 取值：
+#   off  关闭 / 供应商默认            on   开启（toggle 型）
+#   none / minimal / low / medium / high / xhigh / max   effort 型
+# 变体列表来自 models.dev 目录（本机有 Miyu 就直接用它的缓存），拿不到目录时按厂商族回退。
+VARIANT_ORDER = ["off", "on", "none", "minimal", "low", "medium", "high", "xhigh", "max"]
+VARIANT_LABELS = {
+    "zh": {"off": "关闭 / 默认 (off)", "on": "开启 (on)", "none": "无 (none)", "minimal": "最少 (minimal)",
+           "low": "低 (low)", "medium": "中 (medium)", "high": "高 (high)", "xhigh": "很高 (xhigh)", "max": "极高 (max)"},
+    "en": {"off": "Off / default", "on": "On", "none": "None", "minimal": "Minimal",
+           "low": "Low", "medium": "Medium", "high": "High", "xhigh": "Extra high", "max": "Max"},
+}
+LEGACY_THINKING_MAP = [("Disabled", "off"), ("关闭", "off"), ("Low", "low"), ("低", "low"), ("Medium", "medium"),
+                       ("中", "medium"), ("Max", "max"), ("极高", "max"), ("High", "high"), ("高", "high"), ("Enabled", "on"), ("开启", "on")]
+FAMILY_DEFAULT_VARIANTS = {
+    "anthropic": ["on"], "deepseek": ["high", "max"], "gemini": ["low", "medium", "high"],
+    "mimo": ["on"], "zhipu": ["on"], "alibaba": ["on"], "openrouter": ["low", "medium", "high"], "generic": [],
+}
+TOGGLE_FAMILIES = ("anthropic", "deepseek", "mimo", "zhipu", "alibaba", "openrouter")
+CLI_VARIANTS = {
+    "claude-code": ["low", "medium", "high", "xhigh", "max"],
+    "codex": ["minimal", "low", "medium", "high", "xhigh"],
+    "antigravity": ["low", "medium", "high"],
+    "opencode": [], "miyu": [],
+}
+
+
+def variant_label(vid, family=""):
+    if vid == "off" and family == "gemini":
+        return "关闭 / 极低 (off)" if LANG == "zh" else "Off / minimal"
+    return VARIANT_LABELS[LANG].get(vid, vid)
+
+
+def legacy_thinking_id(text):
+    """旧版 thinking_mode 显示文案 → 变体 id。"""
+    text = str(text or "")
+    if not text.strip():
+        return ""
+    for needle, vid in LEGACY_THINKING_MAP:
+        if needle in text:
+            return vid
+    return ""
+
+
+def profile_thinking(profile, model=None):
+    model = model if model is not None else str(profile.get("model", ""))
+    thinking = profile.get("thinking")
+    if isinstance(thinking, dict):
+        return str(thinking.get(model, "") or "")
+    return ""
+
+
+def set_profile_thinking(profile, model, vid):
+    thinking = profile.get("thinking")
+    if not isinstance(thinking, dict):
+        thinking = {}
+        profile["thinking"] = thinking
+    if vid:
+        thinking[model] = vid
+    else:
+        thinking.pop(model, None)
+
+
+# ==========================================
+# 📚 models.dev 模型目录
+# ==========================================
+_catalog_cache = {"data": None, "path": None}
+
+
+def _catalog_candidates():
+    return [p for p in (MIYU_CATALOG, CATALOG_FILE) if os.path.isfile(p)]
+
+
+def catalog_path():
+    """优先用较新的那份：Miyu 的缓存或自己拉的。"""
+    paths = _catalog_candidates()
+    if not paths:
+        return None
+    return max(paths, key=lambda p: os.path.getmtime(p))
+
+
+def catalog_load():
+    if _catalog_cache["data"] is not None:
+        return _catalog_cache["data"]
+    data = {}
+    path = catalog_path()
+    if path:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            if isinstance(raw, dict):
+                data = {k: v for k, v in raw.items() if isinstance(v, dict) and isinstance(v.get("models"), dict)}
+        except (OSError, ValueError):
+            data = {}
+    _catalog_cache["data"] = data
+    _catalog_cache["path"] = path
+    return data
+
+
+def catalog_needs_refresh():
+    if os.path.isfile(MIYU_CATALOG):
+        return False
+    try:
+        return time.time() - os.path.getmtime(CATALOG_FILE) > CATALOG_TTL
+    except OSError:
+        return True
+
+
+def catalog_refresh(timeout=15):
+    req = urllib.request.Request(CATALOG_URL, headers={"User-Agent": "rime-llm-translator", "Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        text = resp.read().decode("utf-8")
+    data = json.loads(text)
+    if not isinstance(data, dict) or not data:
+        raise ValueError("empty catalog")
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".models_dev-", suffix=".json", dir=CACHE_DIR)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(text)
+    os.replace(tmp, CATALOG_FILE)
+    _catalog_cache["data"] = None
+    return catalog_load()
+
+
+def _norm_base_url(url):
+    u = (url or "").strip().lower().rstrip("/")
+    for suffix in ("/chat/completions", "/messages", "/openai", "/api/chat"):
+        if u.endswith(suffix):
+            u = u[: -len(suffix)]
+    return u.rstrip("/")
+
+
+def catalog_provider_for(profile, pid=""):
+    """按 base_url 对齐 models.dev 的供应商键；对不上时退到 id / 域名关键字。"""
+    cat = catalog_load()
+    if not cat:
+        return None
+    base = _norm_base_url(profile.get("api_url", ""))
+    if base:
+        best = None
+        for key, prov in cat.items():
+            api = _norm_base_url(prov.get("api", ""))
+            if api and (base == api or base.startswith(api + "/")):
+                if best is None or len(api) > len(_norm_base_url(cat[best].get("api", ""))):
+                    best = key
+        if best:
+            return best
+    pid_l = (pid or "").lower()
+    if pid_l in cat:
+        return pid_l
+    host = re.sub(r"^https?://", "", base).split("/")[0]
+    for key in cat:
+        if key and (key in host or key in pid_l):
+            return key
+    return None
+
+
+_MODEL_PREFIX_PROVIDERS = [
+    ("claude-", "anthropic"), ("deepseek-", "deepseek"), ("gemini-", "google"), ("gemma-", "google"),
+    ("gpt-", "openai"), ("o1", "openai"), ("o3", "openai"), ("o4", "openai"), ("mimo-", "xiaomi"),
+    ("glm-", "zhipuai"), ("qwen", "alibaba"), ("kimi-", "moonshotai"), ("minimax-", "minimax"), ("grok-", "xai"),
+]
+
+
+def _reasoning_signature(minfo):
+    return json.dumps([bool(minfo.get("reasoning")), minfo.get("reasoning_options") or []], sort_keys=True)
+
+
+def catalog_model_info(profile, model, pid=""):
+    """返回 (models.dev 的模型条目 或 None, 对齐到的供应商键 或 None)。"""
+    cat = catalog_load()
+    if not cat or not model:
+        return None, None
+    provider_key = catalog_provider_for(profile, pid)
+    if provider_key and model in cat[provider_key]["models"]:
+        return cat[provider_key]["models"][model], provider_key
+    bare = model.split("/", 1)[-1]
+    ml = model.lower()
+    for prefix, cpid in _MODEL_PREFIX_PROVIDERS:
+        if (ml.startswith(prefix) or bare.lower().startswith(prefix)) and cpid in cat:
+            models = cat[cpid]["models"]
+            if model in models:
+                return models[model], provider_key
+            if bare in models:
+                return models[bare], provider_key
+    groups = {}
+    for prov in cat.values():
+        for candidate in (model, bare):
+            minfo = prov["models"].get(candidate)
+            if isinstance(minfo, dict):
+                sig = _reasoning_signature(minfo)
+                groups.setdefault(sig, [0, minfo])[0] += 1
+                break
+    if groups:
+        ranked = sorted(groups.values(), key=lambda x: -x[0])
+        if len(ranked) == 1 or ranked[0][0] > ranked[1][0]:
+            return ranked[0][1], provider_key
+    return None, provider_key
+
+
+def vendor_family(profile, model, provider_key=None, pid=""):
+    """厂商族：决定思考档怎么落到请求体上。"""
+    if effective_protocol(profile) == "anthropic":
+        return "anthropic"
+    url = str(profile.get("api_url", "")).lower()
+    ml = (model or "").lower()
+    hay = " ".join([provider_key or "", url, ml, (pid or "").lower()])
+    if "openrouter" in hay:
+        return "openrouter"
+    if "deepseek" in hay:
+        return "deepseek"
+    if "xiaomi" in hay or "mimo" in ml:
+        return "mimo"
+    if "dashscope" in url or provider_key == "alibaba":
+        return "alibaba"
+    if "bigmodel" in url or "zhipu" in hay or "z.ai" in url:
+        return "zhipu"
+    if "generativelanguage" in url or provider_key == "google" or ml.startswith("gemini"):
+        return "gemini"
+    return "generic"
+
+
+def _catalog_variants(minfo):
+    """models.dev 的 reasoning_options → 变体 id 列表（不含 off）。返回 None 表示模型不会思考。"""
+    if not isinstance(minfo, dict):
+        return None
+    opts = [o for o in (minfo.get("reasoning_options") or []) if isinstance(o, dict)]
+    if not minfo.get("reasoning") and not opts:
+        return None
+    effort = next((o for o in opts if o.get("type") == "effort"), None)
+    if effort:
+        return [str(v) for v in (effort.get("values") or []) if v]
+    if any(o.get("type") in ("toggle", "budget_tokens") for o in opts):
+        return ["on"]
+    return []
+
+
+def reasoning_variants(profile, model, pid=""):
+    """可选思考档 id 列表（首项永远是 off），以及用到的厂商族。"""
+    model = model or str(profile.get("model", ""))
+    proto = stored_protocol(profile)
+    if is_cli_protocol(proto):
+        variants = list(CLI_VARIANTS.get(proto, []))
+        if proto == "claude-code" and model == "haiku":
+            variants = []
+        if proto == "antigravity" and not model.startswith("claude-"):
+            variants = []
+        return ["off"] + variants, "cli"
+    minfo, provider_key = catalog_model_info(profile, model, pid)
+    family = vendor_family(profile, model, provider_key, pid)
+    catalog_variants = _catalog_variants(minfo)
+    if catalog_variants is None:
+        variants = [] if minfo is not None else list(FAMILY_DEFAULT_VARIANTS.get(family, []))
+    elif not catalog_variants and family in TOGGLE_FAMILIES:
+        variants = ["on"]  # 目录说会思考但没给档位：有原生开关的厂商就给一个开关
+    else:
+        variants = catalog_variants
+    if family == "generic" and minfo is None:
+        variants = []
+    seen, ordered = set(), []
+    for vid in ["off"] + variants:
+        if vid not in seen:
+            seen.add(vid); ordered.append(vid)
+    return ordered, family
+
+
+def model_has_reasoning(profile, model, pid=""):
+    variants, _ = reasoning_variants(profile, model, pid)
+    return len(variants) > 1
+
+
+def _variant_wire(family, model, vid, settings, minfo):
+    """(附加字段 dict, 运行时模型名 或 None, 是否省略 temperature)"""
+    extra, new_model, omit_temp = {}, None, False
+    kind = "off" if vid in ("", "off") else ("on" if vid == "on" else "effort")
+    if family == "anthropic":
+        if kind != "off":
+            omit_temp = True
+            opts = [o for o in ((minfo or {}).get("reasoning_options") or []) if isinstance(o, dict)]
+            has_effort = any(o.get("type") == "effort" for o in opts)
+            if kind == "effort":
+                extra = {"thinking": {"type": "adaptive"}, "output_config": {"effort": vid}}
+            elif has_effort or any(o.get("type") == "toggle" for o in opts):
+                extra = {"thinking": {"type": "adaptive"}}
+            else:
+                try:
+                    max_tokens = int(settings.get("max_tokens", 4000))
+                except (TypeError, ValueError):
+                    max_tokens = 4000
+                budget = max(1024, int(max_tokens * 0.8))
+                extra = {"thinking": {"type": "enabled", "budget_tokens": budget}}
+                if max_tokens <= budget:
+                    extra["max_tokens"] = budget + 256
+    elif family == "deepseek":
+        if kind == "off":
+            extra = {"thinking": {"type": "disabled"}}
+            if model == "deepseek-reasoner":
+                new_model = "deepseek-chat"
+        else:
+            extra = {"thinking": {"type": "enabled"}}
+            if kind == "effort":
+                extra["reasoning_effort"] = vid
+            if model == "deepseek-chat":
+                new_model = "deepseek-reasoner"
+    elif family in ("mimo", "zhipu"):
+        extra = {"thinking": {"type": "disabled" if kind == "off" else "enabled"}}
+        if kind == "effort":
+            extra["reasoning_effort"] = vid
+    elif family == "gemini":
+        if kind == "off":
+            extra = {"reasoning_effort": "low"}
+        elif kind == "effort":
+            extra = {"reasoning_effort": vid}
+    elif family == "openrouter":
+        if kind == "on":
+            extra = {"reasoning": {"enabled": True}}
+        elif kind == "effort":
+            extra = {"reasoning": {"effort": vid}}
+    elif family == "alibaba":
+        extra = {"enable_thinking": kind != "off"}
+        if kind == "effort":
+            extra["reasoning_effort"] = vid
+    else:
+        if kind == "on":
+            extra = {"thinking": {"type": "enabled"}}
+        elif kind == "effort":
+            extra = {"reasoning_effort": vid}
+    return extra, new_model, omit_temp
+
+
+def resolve_request(profile, settings, pid=""):
+    """把节点 + 模型 + 思考档解析成 Lua 只需拼接的结果。"""
+    model = str(profile.get("model", "")).strip()
+    proto = stored_protocol(profile)
+    result = {"protocol": effective_protocol(profile), "model": model, "thinking": profile_thinking(profile, model),
+              "request_extra": {}, "temperature": None}
+    if is_cli_protocol(proto):
+        return result
+    variants, family = reasoning_variants(profile, model, pid)
+    vid = result["thinking"] if result["thinking"] in variants else "off"
+    result["thinking"] = vid if result["thinking"] else ""
+    minfo, _ = catalog_model_info(profile, model, pid)
+    extra = {}
+    user_extra = profile.get("extra_body")
+    if isinstance(user_extra, dict):
+        extra.update(user_extra)
+    wire, new_model, omit_temp = _variant_wire(family, model, vid, settings, minfo)
+    extra.update(wire)
+    result["request_extra"] = extra
+    if new_model:
+        result["model"] = new_model
+    temps = profile.get("model_temperature")
+    if isinstance(temps, dict) and model in temps:
+        try:
+            result["temperature"] = float(temps[model])
+        except (TypeError, ValueError):
+            pass
+    if omit_temp:
+        result["temperature"] = False
+    return result
+
+
+# ==========================================
+# 🖥️ 本机 CLI 后端与 Miyu 导入
+# ==========================================
+def strip_jsonc(text):
+    """去掉 // 与 /* */ 注释（跳过字符串内部），Miyu 的 config.jsonc 用。"""
+    out = []
+    i, n = 0, len(text)
+    in_str = False
+    while i < n:
+        c = text[i]
+        if in_str:
+            out.append(c)
+            if c == "\\" and i + 1 < n:
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if c == '"':
+                in_str = False
+            i += 1
+            continue
+        if c == '"':
+            in_str = True
+            out.append(c)
+            i += 1
+        elif text.startswith("//", i):
+            while i < n and text[i] != "\n":
+                i += 1
+        elif text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            i = n if end < 0 else end + 2
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
+def split_api_keys(raw):
+    """Miyu 的 api_key 可以是逗号/换行分隔的多把 key，也可以是 $env:NAME。"""
+    keys = []
+    for line in str(raw or "").splitlines():
+        for item in line.split(","):
+            item = item.strip()
+            if not item:
+                continue
+            if item.startswith("$env:"):
+                item = os.environ.get(item[5:].strip(), "").strip()
+            if item:
+                keys.append(item)
+    return keys
+
+
+def cli_model_catalog(protocol, binary=""):
+    """本机 CLI 的模型清单：能问命令的就问（缓存一天），否则用预置列表。"""
+    backend = CLI_BACKENDS.get(protocol)
+    if not backend:
+        return []
+    binary = binary or backend["binary"]
+    cache_file = os.path.join(MODELS_CACHE_DIR, f"{protocol}.json")
+    try:
+        if time.time() - os.path.getmtime(cache_file) < 86400:
+            with open(cache_file, "r", encoding="utf-8") as f:
+                cached = json.load(f)
+            if isinstance(cached, list) and cached:
+                return cached
+    except (OSError, ValueError):
+        pass
+    models = []
+    try:
+        if protocol == "codex":
+            out = subprocess.run([binary, "debug", "models"], capture_output=True, text=True, timeout=20).stdout
+            models = [m.get("slug", "") for m in json.loads(out).get("models", [])
+                      if isinstance(m, dict) and m.get("visibility") != "hide" and m.get("slug")]
+        elif protocol == "antigravity":
+            out = subprocess.run([binary, "models"], capture_output=True, text=True, timeout=20).stdout
+            models = [line.split("\t", 1)[0].strip() for line in out.splitlines()
+                      if line.strip() and not line.startswith("Fetching")]
+        elif protocol == "opencode":
+            out = subprocess.run([binary, "models"], capture_output=True, text=True, timeout=20).stdout
+            models = [line.split()[0] for line in out.splitlines() if line.strip()]
+    except Exception:
+        models = []
+    if models:
+        try:
+            os.makedirs(MODELS_CACHE_DIR, exist_ok=True)
+            with open(cache_file, "w", encoding="utf-8") as f:
+                json.dump(models, f)
+        except OSError:
+            pass
+        return models
+    return list(backend["models"])
+
+
+def builtin_cli_profiles():
+    """PATH 上找得到的 CLI 各生成一个 profile。"""
+    profiles = {}
+    for protocol, backend in CLI_BACKENDS.items():
+        if not shutil.which(backend["binary"]):
+            continue
+        profiles[backend["id"]] = {
+            "name": backend["name"], "protocol": protocol, "api_url": "", "api_key": "",
+            "binary": backend["binary"], "model": backend["default"], "thinking": {}, "source": "builtin",
+        }
+    return profiles
+
+
+def miyu_thinking_defaults():
+    try:
+        with open(MIYU_THINKING, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        selected = data.get("selected") if isinstance(data, dict) else None
+        return selected if isinstance(selected, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def miyu_profiles():
+    """只读导入 Miyu 的供应商：id 前缀 miyu_；CLI 中转线映射到同名协议，HTTP 线要有 key。"""
+    try:
+        with open(MIYU_CONFIG, "r", encoding="utf-8") as f:
+            cfg = json.loads(strip_jsonc(f.read()))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(cfg, dict):
+        return {}
+    plugins = cfg.get("plugins") if isinstance(cfg.get("plugins"), dict) else {}
+    thinking_defaults = miyu_thinking_defaults()
+    profiles = {}
+    for prov in cfg.get("providers") or []:
+        if not isinstance(prov, dict) or prov.get("enabled", True) is False:
+            continue
+        raw_id = str(prov.get("id", "")).strip()
+        if not raw_id:
+            continue
+        raw_protocol = str(prov.get("protocol", "")).strip().lower()
+        if raw_protocol == "openai-responses":
+            continue
+        base_url = str(prov.get("base_url", "")).strip().rstrip("/")
+        protocol = PROTOCOL_ALIASES.get(raw_protocol)
+        if protocol is None:
+            continue
+        keys = split_api_keys(prov.get("api_key") or "")
+        api_key = keys[0] if keys else ""
+        models = [str(m).strip() for m in (prov.get("models") or []) if str(m).strip()]
+        default_model = str(prov.get("default_model") or (models[0] if models else "")).strip()
+        binary = ""
+        if is_cli_protocol(protocol):
+            plugin_key = {"claude-code": "claude_code", "antigravity": "antigravity", "codex": "codex"}.get(protocol)
+            if plugin_key and isinstance(plugins.get(plugin_key), dict):
+                binary = str(plugins[plugin_key].get("binary", "")).strip()
+            if not shutil.which(binary or CLI_BACKENDS[protocol]["binary"]):
+                continue
+            api_url = ""
+            default_model = default_model or CLI_BACKENDS[protocol]["default"]
+        else:
+            if not api_key or not base_url:
+                continue
+            is_anthropic = protocol == "anthropic" or "anthropic" in base_url.lower()
+            if is_anthropic:
+                protocol = "anthropic"
+                api_url = base_url + ("/messages" if base_url.lower().endswith("/v1") else "/v1/messages")
+            elif "generativelanguage" in base_url.lower():
+                api_url = base_url + ("/openai/chat/completions" if not base_url.lower().endswith("/openai") else "/chat/completions")
+            else:
+                api_url = base_url if base_url.lower().endswith("/chat/completions") else base_url + "/chat/completions"
+        pid = "miyu_" + re.sub(r"[^a-zA-Z0-9_]", "_", raw_id)
+        thinking = {}
+        for m in set(models + [default_model]):
+            vid = str(thinking_defaults.get(f"{raw_id}\t{m}", "") or "")
+            if vid:
+                thinking[m] = "off" if vid == "none" else vid
+        profile = {
+            "name": str(prov.get('display_name') or raw_id), "protocol": protocol,
+            "api_url": api_url, "api_key": api_key, "binary": binary,
+            "model": default_model, "thinking": thinking, "source": "miyu",
+        }
+        if isinstance(prov.get("model_temperature"), dict):
+            profile["model_temperature"] = {str(k): v for k, v in prov["model_temperature"].items()}
+        if isinstance(prov.get("extra_body"), dict):
+            profile["extra_body"] = prov["extra_body"]
+        profiles[pid] = profile
+    return profiles
+
+
+def sync_external_profiles(state):
+    """每次加载时刷新内置 CLI 与 Miyu 镜像：元数据以外部为准，用户选过的 model / thinking 保留。"""
+    profiles = state.setdefault("profiles", {})
+    external = {}
+    external.update(builtin_cli_profiles())
+    external.update(miyu_profiles())
+    for pid, fresh in external.items():
+        old = profiles.get(pid)
+        if isinstance(old, dict) and old.get("source") == fresh["source"]:
+            if old.get("model"):
+                fresh["model"] = old["model"]
+            merged = dict(fresh.get("thinking") or {})
+            merged.update({k: v for k, v in (old.get("thinking") or {}).items() if v})
+            fresh["thinking"] = merged
+        elif isinstance(old, dict):
+            continue  # 用户自己的同名节点优先，不覆盖
+        profiles[pid] = fresh
+    for pid in list(profiles):
+        prof = profiles[pid]
+        if isinstance(prof, dict) and prof.get("source") in ("builtin", "miyu") and pid not in external:
+            del profiles[pid]
+    if state.get("active_profile") not in profiles:
+        state["active_profile"] = next((k for k, v in profiles.items() if isinstance(v, dict) and profile_is_usable(v)), "")
+    return state
+
+
+def vocab_block(vocab, text=None):
+    """自定义词库片段。给了 text 就只留正文里真出现的条目——词库越大，这一步省得越多。"""
+    terms = [str(x) for x in (vocab or {}).get("terms", []) if str(x).strip()]
+    mappings = {str(k): str(v) for k, v in ((vocab or {}).get("mappings") or {}).items() if str(k).strip()}
+    if text is not None:
+        low = str(text).lower()
+        terms = [x for x in terms if x.lower() in low]
+        mappings = {k: v for k, v in mappings.items() if k.lower() in low}
+    if not terms and not mappings:
+        return ""
+    lines = ["", VOCAB_TITLE]
+    if terms:
+        lines.append(VOCAB_TERMS_HEAD)
+        lines.append("、".join(terms))
+    if mappings:
+        lines.append(VOCAB_MAPS_HEAD)
+        lines.extend(f"{k}={v}" for k, v in mappings.items())
+    return "\n".join(lines)
+
+
+VOCAB_TITLE = "# 用户词库"
+VOCAB_TERMS_HEAD = "以下是用户常用的英文词/网络黑话，拼音中出现时按原样保留，不要当拼音切分："
+VOCAB_MAPS_HEAD = "以下是用户约定的简拼/缩写映射，遇到时优先按映射输出："
+
+# `base:` 由程序做：模型算 base64 又慢又错，让它只负责把拼音变成中文，编码交给这里。
+# 其余前缀（call/jp/moe/…）照旧原样传给模型，程序不认识也不需要认识。
+BASE64_WORD = "base"
+
+
+def split_prefix(text):
+    """把开头连续的 `xxx:` 拆成段，返回 (段列表, 正文)。"""
+    segs, rest = [], text
+    while True:
+        m = re.match(r"^([a-z]+):(.*)$", rest, re.S)
+        if not m:
+            break
+        segs.append(m.group(1))
+        rest = m.group(2)
+    return segs, rest
+
+
+def _greedy_split(seg, words):
+    """把连写的一段按已知词从左到右贪婪切开；切不干净返回 None。"""
+    parts, pos = [], 0
+    while pos < len(seg):
+        best = ""
+        for w in words:
+            if len(w) > len(best) and seg.startswith(w, pos):
+                best = w
+        if not best:
+            return None
+        parts.append(best)
+        pos += len(best)
+    return parts
+
+
+def strip_base_prefix(text, words):
+    """摘掉 `base`，返回 (交给模型的文本, 要不要编码)。"""
+    segs, rest = split_prefix(text)
+    if not segs:
+        return text, False
+    kept, found = [], False
+    for seg in segs:
+        if seg == BASE64_WORD:
+            found = True
+            continue
+        if BASE64_WORD in seg:
+            parts = _greedy_split(seg, words)
+            if parts and BASE64_WORD in parts:
+                found = True
+                left = [w for w in parts if w != BASE64_WORD]
+                if left:
+                    kept.append("".join(left))
+                continue
+        kept.append(seg)
+    if not found:
+        return text, False
+    return (":".join(kept) + ":" + rest if kept else rest), True
+
+
+# ==========================================
+# ✂️ 提示词分层：常驻核心 + 按需注入
+# ==========================================
+# 提示词里描述各前缀行为的那一整段占了全篇六成，可绝大多数输入是不带前缀的纯拼音，根本用
+# 不上。所以核心（职责 / 注意点 / 严格遵守）常驻，前缀规则只在输入真带了某个前缀时才贴。
+#
+# 铁律：**核心必须逐字节恒定**——DeepSeek / OpenAI 的自动前缀缓存和 Anthropic 的
+# cache_control 全靠它。随输入变化的东西（命中的规则、命中的词库）只能追加在核心之后，
+# 或者干脆放进 user 消息，绝不能插进核心里。
+_RULE_LINE = re.compile(r"^\s*[-*]\s*`([a-z]+):`")
+_HEADING = re.compile(r"^(#+)\s")
+
+
+def split_prompt(prompt):
+    """老结构的提示词 → (核心, {前缀: 规则原文}, 组合规则块, 规则小节标题)。
+
+    只在迁移到结构化前缀之前用；切不出规则行时原样返回，调用方退回全量发送。
+    """
+    prompt = str(prompt or "")
+    lines = prompt.split("\n")
+    rule_idx = [i for i, l in enumerate(lines) if _RULE_LINE.match(l)]
+    if not rule_idx:
+        return prompt, {}, "", ""
+    first, last = rule_idx[0], rule_idx[-1]
+
+    # 规则小节的标题：紧挨在第一条规则上面（中间只允许空行）的那个标题行
+    head, start = "", first
+    for i in range(first - 1, -1, -1):
+        if not lines[i].strip():
+            continue
+        if _HEADING.match(lines[i]):
+            head, start = lines[i], i
+        break
+    head_level = len(_HEADING.match(head).group(1)) if head else 1
+
+    # 规则段的结束：最后一条规则之后的第一个标题行（中间的行算那条规则的续行）
+    end = len(lines)
+    for i in range(last + 1, len(lines)):
+        if _HEADING.match(lines[i]):
+            end = i
+            break
+
+    # 组合规则块：紧随其后、比规则标题更深一级的子小节，直到下一个同级或更浅的标题
+    combo, block_end = "", end
+    if end < len(lines) and len(_HEADING.match(lines[end]).group(1)) > head_level:
+        stop = len(lines)
+        for i in range(end + 1, len(lines)):
+            m = _HEADING.match(lines[i])
+            if m and len(m.group(1)) <= head_level:
+                stop = i
+                break
+        combo = "\n".join(lines[end:stop]).strip("\n")
+        block_end = stop
+
+    rules, bounds = {}, rule_idx + [end]
+    for n, i in enumerate(rule_idx):
+        rules[_RULE_LINE.match(lines[i]).group(1)] = "\n".join(lines[i:bounds[n + 1]]).strip("\n")
+
+    core = "\n".join(lines[:start] + lines[block_end:]).strip("\n")
+    return core, rules, combo, head.strip()
+
+
+def prefix_rule_line(key, rule):
+    """一条前缀规则渲染成发给模型的样子。"""
+    return f"- `{key}:` {str(rule).strip()}"
+
+
+def prompt_layers(state):
+    """(核心, {前缀: 渲染好的规则行}, 组合规则, 未知前缀兜底, 小节标题)。
+
+    有结构化的 `prefixes` 就用它；没有（老 state.json 且切不出规则）就退回从提示词里切。
+    """
+    settings = state.get("settings", {})
+    prompt = str(settings.get("prompt", "") or "")
+    pf = state.get("prefixes")
+    if isinstance(pf, dict) and isinstance(pf.get("rules"), list):
+        rules = {}
+        for item in pf["rules"]:
+            if not isinstance(item, dict):
+                continue
+            key = str(item.get("key", "")).strip().lower()
+            rule = str(item.get("rule", "")).strip()
+            if re.fullmatch(r"[a-z]+", key or "") and rule:
+                rules[key] = prefix_rule_line(key, rule)
+        return prompt, rules, str(pf.get("combo", "") or "").strip(), str(pf.get("fallback", "") or "").strip(), PREFIX_RULES_HEAD
+    core, rules, combo, head = split_prompt(prompt)
+    return core, rules, combo, "", head
+
+
+def rule_words(rules):
+    """按配置里的出场顺序列出前缀词，末尾补上程序自己接管的 `base`。"""
+    words = list(rules.keys())
+    if BASE64_WORD not in words:
+        words.append(BASE64_WORD)
+    return words
+
+
+def split_known(seg, words):
+    """从左贪婪切出已知前缀词；切不动的位置起，剩下的整块当作未知。
+
+    `jpkr` → (["jp"], "kr")：jp 照常注入规则，kr 走兜底，不会因为一个不认识就整段放弃。
+    """
+    parts, pos = [], 0
+    while pos < len(seg):
+        best = ""
+        for w in words:
+            if len(w) > len(best) and seg.startswith(w, pos):
+                best = w
+        if not best:
+            return parts, seg[pos:]
+        parts.append(best)
+        pos += len(best)
+    return parts, ""
+
+
+def resolve_prefixes(text, words):
+    """输入开头用到的前缀：(认识的, 不认识的)。"""
+    segs, _ = split_prefix(str(text or ""))
+    hits, unknown, seen = [], [], set()
+    for seg in segs:
+        known, rest = ([seg], "") if seg in words else split_known(seg, words)
+        for w in known:
+            if w not in seen:
+                seen.add(w)
+                hits.append(w)
+        if rest and rest not in unknown:
+            unknown.append(rest)
+    return hits, unknown
+
+
+def prefix_instructions(text, rules, combo, fallback, head, words, inject="auto"):
+    """这次要注入的前缀规则文本。text 为 None 或 inject 不是 auto 时给全量。"""
+    if text is None or inject != "auto":
+        picked, unknown = [w for w in words if w in rules], []
+    else:
+        hits, unknown = resolve_prefixes(text, words)
+        picked = [w for w in hits if w in rules]
+    lines = [rules[w] for w in picked]
+    if fallback:
+        # 不认识的前缀（`kr:`）给一条通则，比把整篇提示词砸过去又便宜又管用
+        lines.extend(fallback.replace("{p}", u) for u in unknown)
+    if not lines:
+        return ""
+    if combo and (text is None or inject != "auto" or len(picked) + len(unknown) >= 2):
+        lines.append(combo)
+    return "\n".join(([head] if head else []) + lines)
+
+
+def no_history_prefix_set(settings):
+    raw = str(settings.get("no_history_prefixes", DEFAULT_NO_HISTORY_PREFIXES) or "")
+    return {w.strip().lower() for w in raw.replace("，", ",").split(",") if w.strip()}
+
+
+def prefix_position(settings):
+    pos = str(settings.get("prefix_position", DEFAULT_PREFIX_POSITION) or "").strip()
+    return pos if pos in PREFIX_POSITIONS else DEFAULT_PREFIX_POSITION
+
+
+def compose_request(state, user_text=None, history=""):
+    """(system 核心, system 追加, user 正文)。HTTP 线（Lua）和 CLI 线（这里）必须一致。
+
+    system 核心恒定；词库追加在它后面；前缀规则按「规则位置」决定放 system 末尾还是 user 里。
+    """
+    settings = state.get("settings", {})
+    core, rules, combo, fallback, head = prompt_layers(state)
+    words = rule_words(rules)
+    prefix_text = user_text if str(settings.get("prefix_inject", "auto")) == "auto" else None
+    vocab_text = user_text if str(settings.get("vocab_inject", "auto")) == "auto" else None
+    instructions = prefix_instructions(prefix_text, rules, combo, fallback, head, words,
+                                       str(settings.get("prefix_inject", "auto")))
+    pos = prefix_position(settings)
+
+    extra = ("\n" + instructions if instructions and pos == "system" else "")
+    extra += vocab_block(state.get("vocab", {}), vocab_text)
+
+    body = user_text or ""
+    if history:
+        body = f"【历史输入】：{history}\n【当前输入】：{body}"
+    if instructions and pos == "user_before":
+        body = instructions + "\n\n" + body
+    elif instructions and pos == "user_after":
+        body = body + "\n\n" + instructions
+    return core, extra, body
+
+
+def compose_system_prompt(state, user_text=None):
+    core, extra, _ = compose_request(state, user_text)
+    return core + extra
+
+
+def history_wanted(state, text):
+    """`call:` / `cmd:` / `sh:` 这类是在提问，之前打过的字是噪音，不带上文，也省一截 token。"""
+    banned = no_history_prefix_set(state.get("settings", {}))
+    if not banned:
+        return True
+    _, rules, _, _, _ = prompt_layers(state)
+    hits, _unknown = resolve_prefixes(text, rule_words(rules))
+    return not any(w in banned for w in hits)
+
+
+def _run_cli(argv, stdin_text=None, cwd=None, timeout=DEFAULT_CLI_TIMEOUT, env=None):
+    """跑一个 CLI 子进程，整组进程超时即杀；返回 (returncode, stdout, stderr_tail)。"""
+    proc = subprocess.Popen(
+        argv, cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, encoding="utf-8", errors="replace", start_new_session=True,
+    )
+    try:
+        out, err = proc.communicate(stdin_text or "", timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, 9)
+        except OSError:
+            pass
+        proc.wait()
+        raise RuntimeError(f"timed out after {timeout:g}s")
+    return proc.returncode, out, err.strip()[-400:]
+
+
+def _clean_answer(text):
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.S)
+    text = re.sub(r"<think>.*", "", text, flags=re.S)
+    return text.strip()
+
+
+def cli_complete(profile, system_prompt, user_text, timeout=DEFAULT_CLI_TIMEOUT):
+    """本机 CLI 后端一次性问答，返回正文；失败抛 RuntimeError。"""
+    protocol = stored_protocol(profile)
+    model = str(profile.get("model", "")).strip() or CLI_BACKENDS.get(protocol, {}).get("default", "")
+    binary = profile_binary(profile)
+    variants, _ = reasoning_variants(profile, model)
+    effort = profile_thinking(profile, model)
+    if effort not in variants or effort == "off":
+        effort = ""
+    if not shutil.which(binary):
+        raise RuntimeError(f"command not found: {binary}")
+    with tempfile.TemporaryDirectory(prefix="rime-llm-") as workdir:
+        if protocol == "claude-code":
+            argv = [binary, "-p", "--output-format", "text", "--no-session-persistence", "--strict-mcp-config",
+                    "--tools", "", "--model", model, "--system-prompt", system_prompt]
+            if effort:
+                argv += ["--effort", effort]
+            rc, out, err = _run_cli(argv, user_text, cwd=workdir, timeout=timeout)
+            text = _clean_answer(out)
+            if rc != 0 or not text:
+                raise RuntimeError(err or f"claude exited with {rc}")
+            return text
+
+        if protocol == "codex":
+            sys_file = os.path.join(workdir, "instructions.md")
+            with open(sys_file, "w", encoding="utf-8") as f:
+                f.write(system_prompt)
+            out_file = os.path.join(workdir, "answer.txt")
+            argv = [binary, "exec", "--ephemeral", "--ignore-user-config", "--skip-git-repo-check",
+                    "--color", "never", "-s", "read-only", "-C", workdir, "-m", model,
+                    "-c", f'model_instructions_file="{sys_file}"', "-c", "project_doc_max_bytes=0",
+                    "-o", out_file, "-"]
+            if effort:
+                argv += ["-c", f'model_reasoning_effort="{effort}"']
+            rc, _, err = _run_cli(argv, user_text, cwd=workdir, timeout=timeout)
+            text = ""
+            try:
+                with open(out_file, "r", encoding="utf-8") as f:
+                    text = _clean_answer(f.read())
+            except OSError:
+                pass
+            if not text:
+                raise RuntimeError(err or f"codex exited with {rc}")
+            return text
+
+        combined = f"{system_prompt}\n\n---\n\n{user_text}"
+        if protocol == "antigravity":
+            # agy 的 --print 不读 stdin 文本，只能走 stream-json：一行 user 消息进，事件流出，取 result 帧
+            argv = [binary, "--print=", "--input-format", "stream-json", "--output-format", "stream-json",
+                    "--model", model, "--sandbox", "--add-dir", workdir, "--print-timeout", f"{int(timeout)}s"]
+            if effort:
+                argv += ["--effort", effort]
+            payload = json.dumps({"event": "user", "message": {"content": [{"type": "text", "text": combined}]}},
+                                 ensure_ascii=False) + "\n"
+            rc, out, err = _run_cli(argv, payload, cwd=workdir, timeout=timeout)
+            final, deltas = {}, []
+            for line in out.splitlines():
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if event.get("event") == "result":
+                    final.update(event.get("result") or {})
+                elif event.get("event") == "step_update":
+                    step = event.get("step_update") or {}
+                    delta = (step.get("agent_response") or {}).get("text_delta") or step.get("text_delta")
+                    if delta and step.get("step_type") in (None, "agent_response"):
+                        deltas.append(delta)
+            text = _clean_answer(str(final.get("response") or "".join(deltas)))
+            if final.get("status") not in (None, "SUCCESS") or not text:
+                raise RuntimeError(str(final.get("error") or err or f"agy exited with {rc}"))
+            return text
+
+        if protocol == "opencode":
+            env = dict(os.environ, OPENCODE_DISABLE_PROJECT_CONFIG="1", OPENCODE_DISABLE_CLAUDE_CODE="1",
+                       OPENCODE_DISABLE_LSP_DOWNLOAD="1")
+            argv = [binary, "run", "--pure", "-m", model, "--dir", workdir]
+            rc, out, err = _run_cli(argv, combined, cwd=workdir, timeout=timeout, env=env)
+            text = _clean_answer(out)
+            if rc != 0 or not text:
+                raise RuntimeError(err or f"opencode exited with {rc}")
+            return text
+
+        if protocol == "miyu":
+            rc, out, err = _run_cli([binary, "--stdout", "ask"], combined, cwd=workdir, timeout=timeout)
+            text = _clean_answer(out)
+            if rc != 0 or not text:
+                raise RuntimeError(err or f"miyu exited with {rc}")
+            return text
+
+    raise RuntimeError(f"unsupported protocol: {protocol}")
+
+
+def _settings_float(settings, key, default):
+    try:
+        return float(settings.get(key, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _miyu_supports_json(path):
+    """这个 miyu 认不认程序驱动那套参数（--output-format / --session）。
+    旧版把不认识的参数当消息正文发出去，不会报错，所以必须先探测再调用。"""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return False
+    key, sig = os.path.realpath(path), f"{int(st.st_mtime)}:{st.st_size}"
+    try:
+        with open(MIYU_CAPS_FILE, "r", encoding="utf-8") as f:
+            caps = json.load(f)
+        if not isinstance(caps, dict):
+            caps = {}
+    except Exception:
+        caps = {}
+    hit = caps.get(key)
+    if isinstance(hit, dict) and hit.get("sig") == sig:
+        return bool(hit.get("ok"))
+    try:
+        _rc, out, _err = _run_cli([path, "ask", "--help"], "", timeout=15)
+        ok = "--output-format" in out and "--session" in out
+    except Exception:
+        ok = False
+    caps[key] = {"sig": sig, "ok": ok}
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        with open(MIYU_CAPS_FILE, "w", encoding="utf-8") as f:
+            json.dump(caps, f)
+    except OSError:
+        pass
+    return ok
+
+
+def find_miyu(settings):
+    """挑一个够新的 miyu：设置里指定的优先，然后是 PATH，最后是常见安装位置。
+    fcitx5 拉起的进程 PATH 常常没有 ~/.local/bin，所以不能只信 which。"""
+    configured = str(settings.get("miyu_binary", "") or "").strip()
+    if configured:
+        path = shutil.which(configured) or (configured if os.path.isfile(configured) else "")
+        if not path:
+            raise RuntimeError(f"command not found: {configured}")
+        if not _miyu_supports_json(path):
+            raise RuntimeError(f"{path} is too old: `ask` lacks --output-format/--session")
+        return path
+    seen, outdated = [], ""
+    for cand in (shutil.which("miyu"), os.path.expanduser("~/.local/bin/miyu"),
+                 "/usr/local/bin/miyu", "/usr/bin/miyu"):
+        if not cand or cand in seen or not os.path.isfile(cand):
+            continue
+        seen.append(cand)
+        if _miyu_supports_json(cand):
+            return cand
+        outdated = outdated or cand
+    if outdated:
+        raise RuntimeError(f"{outdated} is too old: `ask` lacks --output-format/--session (update Miyu)")
+    raise RuntimeError("command not found: miyu")
+
+
+def miyu_chat(settings, vocab, text):
+    """`miyu ask --session <名> --create --output-format json ...`：一行 done/error 事件，返回 (正文, 模型, 耗时ms)。"""
+    binary = find_miyu(settings)
+    session = str(settings.get("miyu_session", "") or "").strip() or DEFAULT_MIYU_SESSION
+    timeout = _settings_float(settings, "miyu_timeout", DEFAULT_MIYU_TIMEOUT)
+    host_prompt = str(settings.get("miyu_prompt", "") or "").strip() or DEFAULT_MIYU_PROMPT
+    # 词库按需注入：她的宿主指令每次都要重发，词库越大越值得只贴命中的那几条
+    block = vocab_block(vocab, text if str(settings.get("vocab_inject", "auto")) == "auto" else None)
+    if block:
+        host_prompt = f"{host_prompt}\n\n{block}"
+    argv = [binary, "ask", "--session", session, "--create", "--output-format", "json", "--quiet",
+            "--timeout", str(max(1, int(timeout))), "--append-system-prompt", host_prompt, "--stdin"]
+    if not settings.get("miyu_tools", False):
+        argv.append("--no-tools")
+    with tempfile.TemporaryDirectory(prefix="rime-llm-") as workdir:
+        rc, out, err = _run_cli(argv, text, cwd=workdir, timeout=timeout + 5)
+    event = {}
+    for line in reversed(out.splitlines()):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            candidate = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(candidate, dict) and "type" in candidate:
+            event = candidate
+            break
+    if event.get("type") == "done":
+        answer = _clean_answer(str(event.get("text") or ""))
+        if not answer:
+            raise RuntimeError("miyu returned an empty answer")
+        return answer, str(event.get("model") or ""), event.get("elapsed_ms")
+    if event.get("type") == "error":
+        kind = str(event.get("kind") or "error")
+        msg = str(event.get("message") or "").strip()
+        if kind == "timeout":
+            raise RuntimeError(f"timed out after {timeout:g}s")
+        raise RuntimeError(f"{kind}: {msg}" if msg else kind)
+    if rc == 124:
+        raise RuntimeError(f"timed out after {timeout:g}s")
+    raise RuntimeError(err or _clean_answer(out)[-200:] or f"miyu exited with {rc}")
+
+
+def _notify(title, body):
+    if not shutil.which("notify-send"):
+        return
+    try:
+        subprocess.Popen(["notify-send", "-a", "rime-llm-translator", title, body],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError:
+        pass
+
+
+def _chat_deliver(question, payload, ok):
+    """输入法那边已经不等了：答案改用桌面通知送达，并落一份到文件方便取全文。"""
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        with open(CHAT_LAST_FILE, "w", encoding="utf-8") as f:
+            f.write(f"{question}\n\n{payload}\n")
+    except OSError:
+        pass
+    _notify(t("chat_notify_ok") if ok else t("chat_notify_err"), payload[:600])
+
+
+def _chat_once(settings, state, user_text, session):
+    """跑一次问答，返回 (正文或 `ERR: ...`, 成功与否)。"""
+    t0 = time.time()
+    try:
+        answer, model, _elapsed = miyu_chat(settings, state.get("vocab", {}), user_text)
+    except Exception as e:
+        _debug_log(f"【Miyu 聊天】 {session}", user_text, f"ERR: {e}", time.time() - t0)
+        return f"ERR: {e}", False
+    _debug_log(f"【Miyu 聊天】 {session} ({model})", user_text, answer, time.time() - t0)
+    return answer, True
+
+
+def _chat_handoff(settings, state, user_text, session, wait):
+    """等 wait 秒；到点没答完就把这一问留给后台进程，自己先退出让输入法解冻。
+
+    Lua 侧是同步 io.popen，等多久输入法就冻多久，所以长问题必须能中途放手。
+    父子之间用一个管道传结果，外加一个「父进程还在等」的标记文件做交接判定。"""
+    fd, alive_path = tempfile.mkstemp(prefix="rime-chat-")
+    os.close(fd)
+    read_fd, write_fd = os.pipe()
+    pid = os.fork()
+    if pid == 0:
+        try:
+            os.close(read_fd)
+            os.setsid()
+            # 必须换掉继承来的 stdout，否则父进程走了 Lua 那边的管道还不会 EOF
+            null = os.open(os.devnull, os.O_RDWR)
+            os.dup2(null, 0); os.dup2(null, 1); os.dup2(null, 2)
+            payload, ok = _chat_once(settings, state, user_text, session)
+            handed = not os.path.exists(alive_path)
+            if not handed:
+                try:
+                    os.write(write_fd, payload.encode("utf-8"))
+                    os.close(write_fd)
+                except OSError:
+                    handed = True
+                # 父进程可能正好在这一瞬超时走了，补一条通知总比丢了强
+                if not handed and not os.path.exists(alive_path):
+                    handed = True
+            if handed:
+                _chat_deliver(user_text, payload, ok)
+        except BaseException:
+            pass
+        finally:
+            os._exit(0)
+
+    os.close(write_fd)
+    ready, _, _ = select.select([read_fd], [], [], wait)
+    if ready:
+        chunks = []
+        while True:
+            try:
+                block = os.read(read_fd, 65536)
+            except OSError:
+                break
+            if not block:
+                break
+            chunks.append(block)
+        os.close(read_fd)
+        try:
+            os.waitpid(pid, 0)
+        except OSError:
+            pass
+        try:
+            os.unlink(alive_path)
+        except OSError:
+            pass
+        payload = b"".join(chunks).decode("utf-8", "replace")
+        if not payload:
+            print("ERR: " + t("chat_bg_lost")); return 1
+        if payload.startswith("ERR:"):
+            print(payload); return 1
+        sys.stdout.write(payload)
+        return 0
+    # 交接：先摘掉标记，子进程读到就知道该发通知了
+    try:
+        os.unlink(alive_path)
+    except OSError:
+        pass
+    os.close(read_fd)
+    print("BG: " + t("chat_bg", f"{wait:g}"))
+    return 0
+
+
+def run_chat(argv):
+    """`rime-llm-config chat <text>`：把一句话发进 Miyu 的固定会话，正文写 stdout；
+    失败时首行 `ERR: ...` 并以 1 退出，转后台时首行 `BG: ...`（Lua 侧靠前缀分辨）。"""
+    user_text = " ".join(argv).strip()
+    if not user_text and not sys.stdin.isatty():
+        user_text = sys.stdin.read().strip()
+    if not user_text:
+        print("ERR: empty input"); return 1
+    state = load_state()
+    settings = state.get("settings", {})
+    session = settings.get("miyu_session", DEFAULT_MIYU_SESSION)
+    wait = _settings_float(settings, "miyu_wait", DEFAULT_MIYU_WAIT)
+    timeout = _settings_float(settings, "miyu_timeout", DEFAULT_MIYU_TIMEOUT)
+    if 0 < wait < timeout:
+        return _chat_handoff(settings, state, user_text, session, wait)
+    payload, ok = _chat_once(settings, state, user_text, session)
+    if not ok:
+        print(payload); return 1
+    sys.stdout.write(payload)
+    return 0
+
+
+def run_ask(argv):
+    """`rime-llm-config ask [--profile ID] [--history TEXT] <text>`：一次性问答，正文写 stdout；
+    失败时 stdout 首行为 `ERR: ...` 并以 1 退出（Lua 侧靠前缀分辨）。"""
+    profile_id, history, text = "", "", []
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--profile" and i + 1 < len(argv):
+            profile_id = argv[i + 1]; i += 2
+        elif a == "--history" and i + 1 < len(argv):
+            history = argv[i + 1]; i += 2
+        else:
+            text.append(a); i += 1
+    user_text = " ".join(text).strip()
+    if not user_text and not sys.stdin.isatty():
+        user_text = sys.stdin.read().strip()
+    if not user_text:
+        print("ERR: empty input"); return 1
+    state = load_state()
+    profile_id = profile_id or state.get("active_profile", "")
+    profile = state.get("profiles", {}).get(profile_id)
+    if not isinstance(profile, dict):
+        print(f"ERR: profile not found: {profile_id}"); return 1
+    if not profile_is_cli(profile):
+        print(f"ERR: profile '{profile_id}' is not a CLI backend"); return 1
+    settings = state.get("settings", {})
+    user_text, want_base64 = strip_base_prefix(user_text, rule_words(prompt_layers(state)[1]))
+    if not user_text.strip():
+        print("ERR: empty input"); return 1
+    if history and not history_wanted(state, user_text):
+        history = ""
+    core, extra, user_text = compose_request(state, user_text, history)
+    system_prompt = core + extra
+    try:
+        timeout = float(settings.get("cli_timeout", DEFAULT_CLI_TIMEOUT))
+    except (TypeError, ValueError):
+        timeout = DEFAULT_CLI_TIMEOUT
+    t0 = time.time()
+    label = f"【CLI 节点】 {profile.get('name', '?')} ({stored_protocol(profile)} / {profile.get('model', '')})"
+    try:
+        answer = cli_complete(profile, system_prompt, user_text, timeout=timeout)
+    except Exception as e:
+        _debug_log(label, user_text, f"ERR: {e}", time.time() - t0)
+        print(f"ERR: {e}"); return 1
+    if want_base64:
+        answer = base64.b64encode(answer.encode("utf-8")).decode("ascii")
+    _debug_log(label, user_text, answer, time.time() - t0)
+    sys.stdout.write(answer)
+    return 0
+
+
+def _debug_log(label, user_text, answer, elapsed):
+    """与 Lua 侧共用 DEBUG_FLAG 触发器与 DEBUG_LOG 日志（路径由 config.lua 传给 Lua）。"""
+    if not os.path.exists(DEBUG_FLAG):
+        return
+    try:
+        os.makedirs(os.path.dirname(DEBUG_LOG), exist_ok=True)
+        with open(DEBUG_LOG, "a", encoding="utf-8") as f:
+            f.write("========== " + datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S") + " ==========\n")
+            f.write(f"{label} {elapsed:.2f}s\n")
+            f.write("【发出的文本】\n" + user_text + "\n\n【收到的返回】\n" + answer + "\n")
+            f.write("==================================================\n\n")
+    except OSError:
+        pass
+
+
+# ==========================================
+# 💾 状态文件：默认值、迁移、读写、导出
+# ==========================================
+def default_config_candidates():
+    """默认配置按什么顺序找。
+
+    软链接部署（`~/.local/bin/rime-llm-config` → 仓库里的 src/）时脚本跟仓库在一起，这时
+    该用仓库里那份，否则会拿到 /usr/share 里包安装的旧副本——「恢复默认提示词」还原出旧版
+    就是这么来的。装成包时 SCRIPT_DIR 在 /usr 下，仍旧以系统那份为准。
+    """
+    if SCRIPT_DIR.startswith(("/usr/", "/opt/")):
+        return (SYSTEM_DEFAULT_CONFIG, LOCAL_DEFAULT_CONFIG)
+    return (LOCAL_DEFAULT_CONFIG, SYSTEM_DEFAULT_CONFIG)
+
+
+def get_default_state():
+    for path in default_config_candidates():
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict) and isinstance(data.get("profiles"), dict):
+                    return data
+            except Exception:
+                pass
+    # 找不到打包的 default_state.json 时的最小默认：没有公共节点，需要用户自己填 key
+    return {
+        "active_profile": "",
+        "profiles": {
+            "anthropic": {"name": "Anthropic Claude", "protocol": "anthropic", "api_url": "https://api.anthropic.com/v1/messages", "api_key": "", "model": ""},
+            "deepseek": {"name": "DeepSeek", "api_url": "https://api.deepseek.com/chat/completions", "api_key": "", "model": "deepseek-v4-flash"},
+            "gemini": {"name": "Gemini", "api_url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", "api_key": "", "model": ""},
+            "openrouter": {"name": "OpenRouter", "api_url": "https://openrouter.ai/api/v1/chat/completions", "api_key": "", "model": ""},
+            "ollama": {"name": "Ollama", "api_url": "http://localhost:11434/v1/chat/completions", "api_key": "ollama", "model": ""},
+        },
+        "settings": {
+            "prompt": "你是一个智能拼音输入法引擎。你的职责是把用户输入的拼音转换为流畅、通顺、合理的句子，识别错输、漏输、乱序。你的输出会直接上屏：禁止任何客套话，禁止 Markdown。",
+            "ai_trigger": "vv", "max_tokens": 4000, "temperature": 0.1,
+            "connect_timeout": 2.0, "max_time": 30.0, "cli_timeout": DEFAULT_CLI_TIMEOUT,
+            "max_history_bytes": DEFAULT_HISTORY_BYTES, **TOKEN_SAVER_DEFAULTS,
+            "miyu_prefix": DEFAULT_MIYU_PREFIX, "miyu_session": DEFAULT_MIYU_SESSION,
+            "miyu_timeout": DEFAULT_MIYU_TIMEOUT, "miyu_wait": DEFAULT_MIYU_WAIT,
+            "miyu_tools": False, "miyu_prompt": DEFAULT_MIYU_PROMPT, "miyu_binary": "",
+        },
+        "vocab": {"terms": [], "mappings": {}},
+    }
+
+
+def migrate_profile(profile):
+    """旧字段 → 新字段：thinking_mode（显示文案）/ effort → thinking{model: id}，protocol 规范化。"""
+    if not isinstance(profile, dict):
+        return profile
+    proto = stored_protocol(profile)
+    profile["protocol"] = proto
+    thinking = profile.get("thinking")
+    if not isinstance(thinking, dict):
+        thinking = {}
+    model = str(profile.get("model", "") or "")
+    legacy = legacy_thinking_id(profile.pop("thinking_mode", ""))
+    if legacy and model and model not in thinking:
+        thinking[model] = legacy
+    effort = str(profile.pop("effort", "") or "").strip().lower()
+    if effort and model and model not in thinking:
+        thinking[model] = effort
+    profile["thinking"] = {str(k): str(v) for k, v in thinking.items() if v}
+    return profile
+
+
+_MIGRATED_PREFIXES = False
+
+
+def default_prefixes():
+    return {
+        "rules": [{"key": k, "rule": r} for k, r in DEFAULT_PREFIXES],
+        "combo": DEFAULT_PREFIX_COMBO,
+        "fallback": DEFAULT_PREFIX_FALLBACK,
+    }
+
+
+def migrate_prefixes(data):
+    """老结构（规则写在提示词 markdown 里）→ 结构化的 prefixes。返回有没有真的迁移。
+
+    切不出规则就什么都不动，继续走 split_prompt 那条老路——不能因为解析不了就把用户的
+    前缀行为丢掉。
+    """
+    global _MIGRATED_PREFIXES
+    pf = data.get("prefixes")
+    if isinstance(pf, dict) and isinstance(pf.get("rules"), list):
+        pf.setdefault("combo", DEFAULT_PREFIX_COMBO)
+        pf.setdefault("fallback", DEFAULT_PREFIX_FALLBACK)
+        return False
+    settings = data.setdefault("settings", {})
+    core, rules, combo, _head = split_prompt(settings.get("prompt", ""))
+    if not rules:
+        return False
+    # 摘掉行首的 `- `jp:`前缀，` 这层壳，key 已经单独存了；正文保留用户自己的措辞
+    strip = re.compile(r"^\s*[-*]\s*`[a-z]+:`\s*(?:前缀[，,：:]\s*)?")
+    rewritten = dict(DEFAULT_PREFIXES)
+    out = []
+    for key, raw in rules.items():
+        body = strip.sub("", raw).strip()
+        # 跟老版一字不差 = 用户没改过，换成重写后的版本（约束输出而非描述过程）
+        if body == LEGACY_PREFIX_RULES.get(key) and key in rewritten:
+            body = rewritten[key]
+        out.append({"key": key, "rule": body})
+    combo_body = re.sub(r"^#+\s.*\n?", "", combo).strip()
+    if combo_body.startswith(LEGACY_COMBO_HEAD):
+        combo_body = DEFAULT_PREFIX_COMBO
+    data["prefixes"] = {"rules": out, "combo": combo_body, "fallback": DEFAULT_PREFIX_FALLBACK}
+    settings["prompt"] = core
+    _MIGRATED_PREFIXES = True
+    return True
+
+
+def migrate_state(data, default_state):
+    # 必须赶在下面那个"补齐 default_state 里的顶层键"之前：default_state 自带 prefixes，
+    # 先补进来的话 migrate_prefixes 会以为已经是新结构，老用户提示词里的规则段就摘不掉了
+    migrate_prefixes(data)
+    for k in default_state:
+        if k not in data:
+            data[k] = default_state[k]
+    if not isinstance(data.get("profiles"), dict):
+        data["profiles"] = {}
+    if not isinstance(data.get("settings"), dict):
+        data["settings"] = {}
+    for k, v in default_state.get("settings", {}).items():
+        data["settings"].setdefault(k, v)
+    data["settings"].setdefault("cli_timeout", DEFAULT_CLI_TIMEOUT)
+    for k, v in TOKEN_SAVER_DEFAULTS.items():
+        data["settings"].setdefault(k, v)
+    for k, v in (("miyu_prefix", DEFAULT_MIYU_PREFIX), ("miyu_session", DEFAULT_MIYU_SESSION),
+                 ("miyu_timeout", DEFAULT_MIYU_TIMEOUT), ("miyu_wait", DEFAULT_MIYU_WAIT),
+                 ("miyu_tools", False), ("miyu_prompt", DEFAULT_MIYU_PROMPT), ("miyu_binary", "")):
+        data["settings"].setdefault(k, v)
+    # 自带节点只播种一次：记下已经播过的 id，用户删掉的不再复活
+    seeded = data.get("seeded_defaults")
+    default_ids = list(default_state.get("profiles", {}).keys())
+    if not isinstance(seeded, list):
+        seeded = sorted(set(default_ids) | set(data["profiles"].keys()))
+    else:
+        for pk, pv in default_state["profiles"].items():
+            if pk not in seeded and pk not in data["profiles"]:
+                data["profiles"][pk] = pv
+                seeded.append(pk)
+    data["seeded_defaults"] = seeded
+    for pid in list(data["profiles"]):
+        data["profiles"][pid] = migrate_profile(data["profiles"][pid])
+    return data
+
+
+def load_state():
+    default_state = get_default_state()
+    if not os.path.exists(STATE_FILE):
+        return sync_external_profiles(migrate_state(json.loads(json.dumps(default_state)), default_state))
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            raise ValueError("state.json is not an object")
+        return sync_external_profiles(migrate_state(data, default_state))
+    except Exception:
+        return sync_external_profiles(migrate_state(json.loads(json.dumps(default_state)), default_state))
+
+
+def save_state(state, export=True):
+    """写 state.json；默认顺手导出 config.lua，保证两条线（HTTP 读 config.lua、CLI 读 state.json）一致。"""
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False, indent=4)
+    if export:
+        try:
+            export_to_lua(state)
+        except Exception:
+            pass
+
+
+def lua_str(s):
+    """Lua 双引号字符串字面量。"""
+    s = str(s if s is not None else "")
+    out = []
+    for ch in s:
+        if ch == "\\": out.append("\\\\")
+        elif ch == '"': out.append('\\"')
+        elif ch == "\n": out.append("\\n")
+        elif ch == "\r": out.append("\\r")
+        elif ch == "\t": out.append("\\t")
+        elif ord(ch) < 32 or ord(ch) == 127: out.append("\\%03d" % ord(ch))
+        else: out.append(ch)
+    return '"' + "".join(out) + '"'
+
+
+def lua_long(s):
+    """Lua 长字符串，自动挑一个内容里不存在的等号级别。"""
+    s = str(s if s is not None else "")
+    level = 1
+    while f"]{'=' * level}]" in s:
+        level += 1
+    eq = "=" * level
+    return f"[{eq}[{s}]{eq}]"
+
+
+def lua_num(v, default):
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        f = float(default)
+    if f == int(f) and "." not in str(v):
+        return str(int(f))
+    return repr(f)
+
+
+def lua_list(items):
+    return "{ " + ", ".join(lua_str(x) for x in items) + " }"
+
+
+def lua_bool(v):
+    return "true" if v else "false"
+
+
+def ensure_private_dir(path):
+    if not path:
+        return False
+    try:
+        os.makedirs(path, mode=0o700, exist_ok=True)
+        os.chmod(path, 0o700)
+        return True
+    except OSError:
+        return False
+
+
+def export_to_lua(state):
+    settings = state.get("settings", {})
+    tmp_dirs = [d for d in (RUNTIME_TMP_DIR, CONFIG_TMP_DIR) if ensure_private_dir(d)]
+
+    # 提示词切成「常驻核心 + 按需片段」，Lua 侧照着拼；切不动就核心=全文、规则表为空，
+    # Lua 那边照旧整份发送。
+    prompt_core, prompt_rules, prompt_combo, prompt_fallback, prompt_head = prompt_layers(state)
+    words = rule_words(prompt_rules)
+    rules_str = "".join(
+        f"\n        [{lua_str(k)}] = {lua_long(prompt_rules[k])}," for k in words if k in prompt_rules
+    )
+    vocab_terms = [str(x) for x in state.get("vocab", {}).get("terms", []) if str(x).strip()]
+    stamp = hashlib.sha1(
+        (str(settings.get("prompt", "")) + "\0" + json.dumps(state.get("vocab", {}), sort_keys=True, ensure_ascii=False)
+         ).encode("utf-8")).hexdigest()[:12]
+    vocab_maps = ", ".join(
+        f"{{ {lua_str(k)}, {lua_str(v)} }}"
+        for k, v in (state.get("vocab", {}).get("mappings") or {}).items() if str(k).strip()
+    )
+    os.makedirs(CACHE_DIR, exist_ok=True)
+
+    profiles_str = ""
+    for pid, p in state.get("profiles", {}).items():
+        if not isinstance(p, dict):
+            continue
+        resolved = resolve_request(p, settings, pid)
+        lines = [
+            f"name = {lua_str(p.get('name', pid))}",
+            f"protocol = {lua_str(resolved['protocol'])}",
+            f"api_url = {lua_str(p.get('api_url', ''))}",
+            f"api_key = {lua_str(p.get('api_key', ''))}",
+            f"model = {lua_str(resolved['model'])}",
+            f"thinking = {lua_str(resolved['thinking'])}",
+            f"binary = {lua_str(profile_binary(p) if profile_is_cli(p) else '')}",
+        ]
+        if resolved["request_extra"]:
+            lines.append(f"request_extra = {lua_long(json.dumps(resolved['request_extra'], ensure_ascii=False))}")
+        if resolved["temperature"] is False:
+            lines.append("temperature = false")
+        elif resolved["temperature"] is not None:
+            lines.append(f"temperature = {lua_num(resolved['temperature'], 0.1)}")
+        body = "\n".join("            " + l + "," for l in lines)
+        profiles_str += f"\n        [{lua_str(pid)}] = {{\n{body}\n        }},"
+
+    lua_code = f"""-- =========================================================
+-- 文件名：config.lua
+-- 存放位置：{CONFIG_DIR}
+-- 由 rime-llm-config 自动生成，请勿手动修改此文件！
+-- 思考档 / 厂商私有字段已经解析成每个节点的 request_extra，Lua 只负责拼接。
+-- =========================================================
+
+return {{
+    active_profile = {lua_str(state.get('active_profile', ''))},
+    profiles = {{{profiles_str}
+    }},
+    ai_trigger = {lua_str(settings.get('ai_trigger', 'vv'))},
+    prompt = {lua_long(settings.get('prompt', ''))},
+    prompt_core = {lua_long(prompt_core)},
+    prompt_rules = {{{rules_str}
+    }},
+    prompt_rules_head = {lua_str(prompt_head)},
+    prompt_combo = {lua_long(prompt_combo)},
+    rule_words = {lua_list(words)},
+    prefix_inject = {lua_str(settings.get('prefix_inject', 'auto'))},
+    vocab_prompt = {lua_long(vocab_block(state.get('vocab', {})))},
+    vocab = {{
+        title = {lua_str(VOCAB_TITLE)},
+        terms_head = {lua_str(VOCAB_TERMS_HEAD)},
+        maps_head = {lua_str(VOCAB_MAPS_HEAD)},
+        terms = {lua_list(vocab_terms)},
+        maps = {{ {vocab_maps} }},
+    }},
+    vocab_inject = {lua_str(settings.get('vocab_inject', 'auto'))},
+    no_history_prefixes = {lua_list(sorted(no_history_prefix_set(settings)))},
+    adaptive_max_tokens = {lua_bool(settings.get('adaptive_max_tokens', True))},
+    prompt_cache_mark = {lua_bool(settings.get('prompt_cache_mark', True))},
+    reply_cache_disk = {lua_bool(settings.get('reply_cache_disk', True))},
+    reply_cache_file = {lua_str(REPLY_CACHE_FILE)},
+    prompt_stamp = {lua_str(stamp)},
+    reply_cache_max = {lua_num(settings.get('reply_cache_max', DEFAULT_REPLY_CACHE_MAX), DEFAULT_REPLY_CACHE_MAX)},
+    reply_cache_min_len = {lua_num(settings.get('reply_cache_min_len', DEFAULT_REPLY_CACHE_MIN_LEN), DEFAULT_REPLY_CACHE_MIN_LEN)},
+    usage_file = {lua_str(USAGE_FILE)},
+    max_tokens = {lua_num(settings.get('max_tokens', 4000), 4000)},
+    temperature = {lua_num(settings.get('temperature', 0.1), 0.1)},
+    connect_timeout = {lua_num(settings.get('connect_timeout', 2.0), 2.0)},
+    max_time = {lua_num(settings.get('max_time', 30.0), 30.0)},
+    max_history_bytes = {lua_num(settings.get('max_history_bytes', DEFAULT_HISTORY_BYTES), DEFAULT_HISTORY_BYTES)},
+    cli_timeout = {lua_num(settings.get('cli_timeout', DEFAULT_CLI_TIMEOUT), DEFAULT_CLI_TIMEOUT)},
+    miyu_prefix = {lua_str(str(settings.get('miyu_prefix', DEFAULT_MIYU_PREFIX) or '').strip())},
+    prompt_fallback = {lua_long(prompt_fallback)},
+    prefix_position = {lua_str(prefix_position(settings))},
+    prefix_words = {lua_list(words)},
+    config_tool = {lua_str(os.path.realpath(sys.argv[0]))},
+    tmp_dirs = {{ {", ".join(lua_str(d) for d in tmp_dirs)} }},
+    debug_flag = {lua_str(DEBUG_FLAG)},
+    debug_log = {lua_str(DEBUG_LOG)},
+}}
+"""
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".config-", suffix=".lua", dir=CONFIG_DIR)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(lua_code)
+    os.replace(tmp, LUA_FILE)
+    return LUA_FILE
+
+# ==========================================
+# 🚀 CLI 参数处理与自动初始化
+# ==========================================
+
+C_BLU = '\033[94m'; C_GRN = '\033[92m'; C_YLW = '\033[93m'; C_RED = '\033[91m'
+C_CYN = '\033[96m'; C_GRY = '\033[90m'; C_RES = '\033[0m'; C_BLD = '\033[1m'
+
+L_INFO = f"{C_BLU}[INFO]{C_RES}   "
+L_OK   = f"{C_GRN}[OK]{C_RES}     "
+L_WARN = f"{C_YLW}[WARN]{C_RES}   "
+L_ERR  = f"{C_RED}[ERROR]{C_RES}  "
+L_SKIP = f"{C_GRY}[SKIP]{C_RES}   "
+
+def backup_file(filepath):
+    if not os.path.exists(filepath): return
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    basename = os.path.basename(filepath)
+    backup_path = os.path.join(BACKUP_DIR, f"{basename}.{timestamp}.bak")
+    shutil.copy2(filepath, backup_path)
+    print(f"{L_INFO} " + t("cli_bk_create", backup_path))
+
+def restart_fcitx5():
+    try:
+        if subprocess.run(["pgrep", "-x", "fcitx5"], capture_output=True).returncode != 0:
+            print(f"{L_INFO} " + t("cli_fcitx_not_run"))
+            return
+        print(f"{L_INFO} " + t("cli_fcitx_restarting"))
+        if shutil.which("systemctl"):
+            res = subprocess.run(["systemctl", "--user", "is-active", "fcitx5"], capture_output=True, text=True)
+            if res.stdout.strip() == "active":
+                subprocess.run(["systemctl", "--user", "restart", "fcitx5"])
+                print(f"{L_OK} " + t("cli_fcitx_ok_sysd"))
+                return
+        subprocess.Popen(["fcitx5", "-r", "-d"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print(f"{L_OK} " + t("cli_fcitx_ok_cli"))
+    except Exception as e:
+        print(f"{L_WARN} " + t("cli_fcitx_fail", str(e)))
+
+def print_tutorial():
+    state = load_state()
+    trigger = state.get("settings", {}).get("ai_trigger", "vv")
+
+    print(f"\n{C_CYN}{C_BLD}======================================================================={C_RES}")
+    print(f"{C_GRN}{C_BLD}  {t('cli_tut_title')}{C_RES}")
+    print(f"{C_CYN}{C_BLD}======================================================================={C_RES}")
+    print(f"  {C_YLW}{t('cli_tut_1', trigger)}{C_RES}")
+    print(f"  {C_YLW}{t('cli_tut_2', trigger)}{C_RES}")
+    print(f"  {C_GRY}                   {t('cli_tut_2_ex', trigger)}{C_RES}")
+    print(f"  {C_YLW}{t('cli_tut_3')}{C_RES}")
+    print(f"  {C_GRY}                   {t('cli_tut_3_ex')}{C_RES}")
+    print(f"{C_CYN}{C_BLD}======================================================================={C_RES}\n")
+
+# 雾凇默认 alphabet（含大写字母和辅码引导符 `）+ 本项目允许直接输入的标点
+RIME_ICE_ALPHABET = "zyxwvutsrqponmlkjihgfedcbaZYXWVUTSRQPONMLKJIHGFEDCBA`"
+LLM_EXTRA_ALPHABET = ".,?'!:<>\\\\/"
+OLD_ALPHABET_LINE = '"speller/alphabet": "zyxwvutsrqponmlkjihgfedcba.,?\'!:<>\\\\/"'
+NEW_ALPHABET_LINE = f'"speller/alphabet": "{RIME_ICE_ALPHABET}{LLM_EXTRA_ALPHABET}"'
+PROCESSOR_LINE = '"engine/processors/@before 0": lua_processor@llm_processor'
+TRANSLATOR_LINE = '"engine/translators/@before 0": lua_translator@llm_translator'
+RIME_LUA_TRANSLATOR = 'llm_translator = require("llm_translator")'
+RIME_LUA_PROCESSOR = 'llm_processor = llm_translator.processor'
+PATCH_CONTENT = f"""
+  # 1. 扩充允许输入的字符集：保留雾凇默认（含大写与辅码引导符 `），再允许在拼音中直接输入指定标点
+  {NEW_ALPHABET_LINE}
+  # 2. 触发键处理器：截获 vv 的第二个 v，把触发词从编码区拿掉并武装 AI 翻译
+  {PROCESSOR_LINE}
+  # 3. 将 Lua AI 脚本 (llm_translator) 插入到翻译器列表的第 0 位之前
+  {TRANSLATOR_LINE}
+  # 4. 定义正则捕获规则：把输入当成不可分割的整体喂给 AI 脚本处理
+  "recognizer/patterns/llm_pinyin": "^[a-z][a-z.,?'!:<>/\\\\\\\\]*$"
+"""
+
+def init_rime_config():
+    print(f"{L_INFO} " + t("cli_init_start"))
+    rime_dir = os.path.expanduser("~/.local/share/fcitx5/rime")
+    if not os.path.exists(rime_dir):
+        print(f"{L_WARN} " + t("cli_init_mkdir", rime_dir))
+        os.makedirs(rime_dir, exist_ok=True)
+
+    print(f"{L_INFO} " + t("cli_init_gen_config"))
+    state = load_state()
+    save_state(state)
+    print(f"{L_OK} " + t("cli_init_ok_config", CONFIG_DIR))
+
+    rime_lua = os.path.join(rime_dir, "rime.lua")
+    lua_inject = RIME_LUA_TRANSLATOR + "\n" + RIME_LUA_PROCESSOR + "\n"
+    if os.path.exists(rime_lua):
+        with open(rime_lua, 'r', encoding='utf-8') as f: content = f.read()
+        if "llm_translator" not in content:
+            backup_file(rime_lua)
+            with open(rime_lua, 'a', encoding='utf-8') as f: f.write("\n" + lua_inject)
+            print(f"{L_OK} " + t("cli_init_ok_lua"))
+        elif "llm_processor" not in content:
+            backup_file(rime_lua)
+            with open(rime_lua, 'a', encoding='utf-8') as f: f.write("\n" + RIME_LUA_PROCESSOR + "\n")
+            print(f"{L_OK} " + t("cli_init_upg_lua"))
+        else: print(f"{L_SKIP} " + t("cli_init_skip_lua"))
+    else:
+        with open(rime_lua, 'w', encoding='utf-8') as f: f.write(lua_inject)
+        print(f"{L_OK} " + t("cli_init_new_lua"))
+
+    ice_installed = os.path.exists("/usr/share/rime-data/rime_ice.schema.yaml") or \
+                    os.path.exists(os.path.join(rime_dir, "rime_ice.schema.yaml"))
+
+    if ice_installed:
+        print(f"{L_INFO} " + t("cli_init_ice_det"))
+        custom_yaml = os.path.join(rime_dir, "rime_ice.custom.yaml")
+        if os.path.exists(custom_yaml):
+            with open(custom_yaml, 'r', encoding='utf-8') as f: content = f.read()
+            if "llm_translator" not in content:
+                backup_file(custom_yaml)
+                if "patch:" in content:
+                    content = content.replace("patch:", "patch:\n" + PATCH_CONTENT, 1)
+                    with open(custom_yaml, 'w', encoding='utf-8') as f: f.write(content)
+                else:
+                    with open(custom_yaml, 'a', encoding='utf-8') as f: f.write("\npatch:\n" + PATCH_CONTENT)
+                print(f"{L_OK} " + t("cli_init_ok_yaml"))
+            elif "llm_processor" not in content:
+                backup_file(custom_yaml)
+                new_content = content.replace(OLD_ALPHABET_LINE, NEW_ALPHABET_LINE)
+                if TRANSLATOR_LINE in new_content:
+                    idx = new_content.index(TRANSLATOR_LINE)
+                    line_start = new_content.rfind("\n", 0, idx) + 1
+                    indent = new_content[line_start:idx]
+                    new_content = new_content[:line_start] + indent + PROCESSOR_LINE + "\n" + new_content[line_start:]
+                with open(custom_yaml, 'w', encoding='utf-8') as f: f.write(new_content)
+                print(f"{L_OK} " + t("cli_init_upg_yaml"))
+            else: print(f"{L_SKIP} " + t("cli_init_skip_yaml"))
+        else:
+            with open(custom_yaml, 'w', encoding='utf-8') as f: f.write("patch:\n" + PATCH_CONTENT)
+            print(f"{L_OK} " + t("cli_init_new_yaml"))
+    else:
+        print(f"{L_WARN} " + t("cli_init_no_ice"))
+
+    restart_fcitx5()
+    print_tutorial()
+
+def run_debug():
+    print(f"\n{C_CYN}{C_BLD}======================================================================={C_RES}")
+    print(f"{C_GRN}{C_BLD}  🐛 RIME LLM Debug Monitor Active{C_RES}")
+    print(f"{C_CYN}{C_BLD}======================================================================={C_RES}")
+    print(f"  {C_YLW}已激活日志记录。正在监听输入法请求... (按 Ctrl+C 退出并关闭日志){C_RES}")
+    print(f"  {C_GRY}日志: {DEBUG_LOG}{C_RES}\n")
+
+    try:
+        os.makedirs(os.path.dirname(DEBUG_FLAG), exist_ok=True)
+        os.makedirs(os.path.dirname(DEBUG_LOG), exist_ok=True)
+        # 1. 放置触发器，激活 Lua 日志（路径通过 config.lua 告知 Lua，重新导出一次保证一致）
+        try: export_to_lua(load_state())
+        except Exception: pass
+        with open(DEBUG_FLAG, "w") as f: f.write("1")
+        # 2. 确保日志文件存在，防止 tail 报错
+        if not os.path.exists(DEBUG_LOG):
+            with open(DEBUG_LOG, "w") as f: f.write("")
+        # 3. 启动 tail -f 实时阻塞打印
+        subprocess.run(["tail", "-f", DEBUG_LOG])
+    except KeyboardInterrupt:
+        print(f"\n\n{L_INFO} 正在退出调试模式...")
+    finally:
+        # 4. 无论如何退出，必须销毁触发器，让 Lua 重新静默
+        if os.path.exists(DEBUG_FLAG):
+            os.remove(DEBUG_FLAG)
+        print(f"{L_OK} 调试监控已关闭，输入法恢复静默模式。")
+
+def load_usage():
+    try:
+        with open(USAGE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def run_usage(argv):
+    """token 用量：数字由 Lua 侧每次 HTTP 请求后从响应的 usage 字段累加进 usage.json。"""
+    if argv and argv[0] in ("--reset", "reset", "-r"):
+        try:
+            os.remove(USAGE_FILE)
+        except OSError:
+            pass
+        print(f"{L_OK} " + t("cli_usage_reset"))
+        return 0
+    u = load_usage()
+    reqs = int(u.get("requests") or 0)
+    if not reqs:
+        print(f"{L_WARN} " + t("cli_usage_none"))
+        return 0
+    pin = int(u.get("prompt") or 0)
+    cached = int(u.get("cached") or 0)
+    out = int(u.get("completion") or 0)
+    billed = (pin - cached) + cached * 0.1
+    hit = f" ({cached:,} cached / {cached * 100 // max(pin, 1)}%)" if cached else ""
+    since = datetime.datetime.fromtimestamp(u.get("since") or 0).strftime("%Y-%m-%d %H:%M")
+    print(f"\n{C_CYN}{C_BLD}{t('cli_usage_title')}{C_RES}")
+    print(f"  {pad_str(t('cli_usage_since'), 26)}: {since}")
+    print(f"  {pad_str(t('cli_usage_req'), 26)}: {reqs:,}")
+    print(f"  {pad_str(t('cli_usage_in'), 26)}: {pin:,}{hit}")
+    print(f"  {pad_str(t('cli_usage_out'), 26)}: {out:,}")
+    print(f"  {pad_str(t('cli_usage_avg'), 26)}: {pin // reqs:,}")
+    print(f"  {pad_str(t('cli_usage_billed'), 26)}: {billed / reqs:,.0f} / {C_GRN}{billed:,.0f}{C_RES}")
+    recent = u.get("recent")
+    if isinstance(recent, list) and recent:
+        print(f"\n{C_CYN}{C_BLD}[ {t('cli_usage_recent')} ]{C_RES}")
+        for e in recent[-10:]:
+            if not isinstance(e, dict):
+                continue
+            ts = datetime.datetime.fromtimestamp(e.get("t") or 0).strftime("%H:%M:%S")
+            c = int(e.get("cached") or 0)
+            print(f"  {C_GRY}{ts}{C_RES}  in {int(e.get('in') or 0):>6,}"
+                  + (f" {C_GRN}(cache {c:,}){C_RES}" if c else " " * 14)
+                  + f"  out {int(e.get('out') or 0):>5,}  {C_GRY}{e.get('m', '')}{C_RES}")
+    print()
+    return 0
+
+
+def run_reset_prompt():
+    """把提示词换回程序自带的默认版本（自带版本是按分层裁剪重写过的精简版）。"""
+    state = load_state()
+    default = get_default_state().get("settings", {}).get("prompt", "")
+    if not default:
+        print(f"{L_ERR} default_state.json not found")
+        return 1
+    if os.path.exists(STATE_FILE):
+        backup_file(STATE_FILE)
+    state["settings"]["prompt"] = default
+    save_state(state)
+    print(f"{L_OK} " + t("tui_sv_reset_done"))
+    return 0
+
+
+def print_help():
+    print(t("cli_help_title"))
+    print(t("cli_help_tui"))
+    print(t("cli_help_init"))
+    print(t("cli_help_sync"))
+    print(t("cli_help_stat"))
+    print(t("cli_help_debug"))
+    print(t("cli_help_ask"))
+    print(t("cli_help_chat"))
+    print(t("cli_help_catalog"))
+    print(t("cli_help_usage"))
+    print(t("cli_help_reset_prompt"))
+    print(t("cli_help_h") + "\n")
+
+def cli_handler():
+    if len(sys.argv) > 1:
+        cmd = sys.argv[1].lower()
+        if cmd in ("-h", "--help", "help"): print_help(); return True
+        elif cmd == "init": init_rime_config(); return True
+        elif cmd == "debug":
+            run_debug()
+            return True
+        elif cmd == "ask":
+            sys.exit(run_ask(sys.argv[2:]))
+        elif cmd == "chat":
+            sys.exit(run_chat(sys.argv[2:]))
+        elif cmd == "usage":
+            sys.exit(run_usage(sys.argv[2:]))
+        elif cmd in ("reset-prompt", "reset_prompt"):
+            sys.exit(run_reset_prompt())
+        elif cmd == "sync":
+            state = load_state()
+            if _MIGRATED_PREFIXES:
+                # 前缀刚从提示词里拆出来，落一次盘，用户在 state.json 里看到的就是新结构
+                if os.path.exists(STATE_FILE):
+                    backup_file(STATE_FILE)
+                save_state(state)
+                print(f"{L_OK} " + t("cli_migrated"))
+                out = LUA_FILE
+            else:
+                out = export_to_lua(state)
+            print(f"{L_OK} " + t("cli_sync_ok", out))
+            return True
+        elif cmd == "catalog":
+            try:
+                cat = catalog_refresh()
+                print(f"{L_OK} " + t("cli_catalog_ok", len(cat), CATALOG_FILE))
+            except Exception as e:
+                print(f"{L_ERR} " + t("cli_catalog_fail", e))
+            return True
+        elif cmd == "status":
+            state = load_state()
+            active = state.get("active_profile", "None")
+            p = state["profiles"].get(active, {})
+            s = state.get("settings", {})
+            resolved = resolve_request(p, s, active) if p else {"protocol": "-", "thinking": "", "request_extra": {}, "model": ""}
+            print(f"{t('cli_stat_prof')} {active} ({p.get('name', 'N/A')})")
+            print(f"{t('cli_stat_model')} {p.get('model', 'None')}" + (f" → {resolved['model']}" if resolved.get('model') and resolved['model'] != p.get('model') else ""))
+            print(f"{t('cli_stat_proto')} {resolved['protocol']}" + (f" ({profile_binary(p)})" if p and profile_is_cli(p) else ""))
+            print(f"{t('cli_stat_think')} {variant_label(resolved['thinking'] or 'off')}")
+            if resolved.get("request_extra"):
+                print(f"{t('cli_stat_extra')} {json.dumps(resolved['request_extra'], ensure_ascii=False)}")
+            print(f"{t('cli_stat_state')} {STATE_FILE}")
+            print(f"{t('cli_stat_lua')} {LUA_FILE}")
+
+            print(f"\n{C_CYN}{C_BLD}[ {t('tui_opt_settings')} ]{C_RES}")
+            print(f"  {pad_str(t('tui_st_trigger'), 25)}: {s.get('ai_trigger', 'vv')}")
+            print(f"  {pad_str(t('tui_st_tokens'), 25)}: {s.get('max_tokens', 4000)}")
+            print(f"  {pad_str(t('tui_st_temp'), 25)}: {s.get('temperature', 0.1)}")
+            print(f"  {pad_str(t('tui_st_time'), 25)}: {s.get('max_time', 30.0)}")
+            print(f"  {pad_str(t('tui_st_history_bytes'), 25)}: {s.get('max_history_bytes', 240)}")
+            prefix = str(s.get("miyu_prefix", DEFAULT_MIYU_PREFIX) or "").strip()
+            if prefix:
+                try:
+                    where = find_miyu(s)
+                except Exception as e:
+                    where = f"! {e}"
+                miyu_desc = (f"{prefix} → session '{s.get('miyu_session', DEFAULT_MIYU_SESSION)}', "
+                             f"wait {s.get('miyu_wait', DEFAULT_MIYU_WAIT)}s / max {s.get('miyu_timeout', DEFAULT_MIYU_TIMEOUT)}s, "
+                             f"tools={'on' if s.get('miyu_tools') else 'off'}, {where}")
+            else:
+                miyu_desc = "off"
+            print(f"  {pad_str(t('cli_stat_miyu'), 25)}: {miyu_desc}")
+            inj = t('tui_inject_auto') if str(s.get('prefix_inject', 'auto')) == 'auto' else t('tui_inject_all')
+            vinj = t('tui_inject_auto') if str(s.get('vocab_inject', 'auto')) == 'auto' else t('tui_inject_all')
+            disk = 'on' if s.get('reply_cache_disk', True) else 'off'
+            core_len = len(prompt_layers(state)[0])
+            print(f"  {pad_str(t('cli_stat_saver'), 25)}: prompt={inj} / vocab={vinj} / cache={disk}"
+                  f" / core={core_len}{'字' if LANG == 'zh' else ' chars'}")
+
+            prompt = s.get("prompt", "None")
+            print(f"\n{C_CYN}{C_BLD}[ {t('tui_st_prompt')} ]{C_RES}")
+            print(f"{C_GRY}{prompt}{C_RES}\n")
+            return True
+        elif cmd == "tui": return False
+        else:
+            print(f"{L_ERR} " + t("cli_err_cmd", cmd))
+            print_help()
+            return True
+    return False
+
+# ==========================================
+# 🎨 基础 UI 组件
+# ==========================================
+
+C_MAIN, C_HL, C_TITLE, C_ERR, C_SUCCESS = 1, 2, 3, 4, 5
+
+def init_colors():
+    curses.start_color()
+    curses.use_default_colors()
+    curses.init_pair(C_MAIN, curses.COLOR_WHITE, -1)
+    curses.init_pair(C_HL, curses.COLOR_BLACK, curses.COLOR_CYAN)
+    curses.init_pair(C_TITLE, curses.COLOR_CYAN, -1)
+    curses.init_pair(C_ERR, curses.COLOR_RED, -1)
+    curses.init_pair(C_SUCCESS, curses.COLOR_GREEN, -1)
+
+def str_width(s): return sum(2 if unicodedata.east_asian_width(c) in 'WF' else 1 for c in str(s))
+def pad_str(s, width): return s + " " * max(0, width - str_width(s))
+
+def truncate_str(s, max_width):
+    w = 0; res =[]
+    for c in str(s):
+        cw = str_width(c)
+        if w + cw > max_width: break
+        res.append(c); w += cw
+    return "".join(res)
+
+def _safe_addstr(win, y, x, text, attr=0):
+    try: win.addstr(y, x, text, attr)
+    except curses.error: pass
+
+def draw_box(stdscr, y, x, h, w, title=""):
+    stdscr.attron(curses.color_pair(C_TITLE))
+    _safe_addstr(stdscr, y, x, "┌" + "─"*(w-2) + "┐")
+    for r in range(1, h-1): _safe_addstr(stdscr, y+r, x, "│" + " "*(w-2) + "│")
+    _safe_addstr(stdscr, y+h-1, x, "└" + "─"*(w-2) + "┘")
+    if title: _safe_addstr(stdscr, y, x+2, f" {title} ", curses.A_BOLD)
+    stdscr.attroff(curses.color_pair(C_TITLE))
+
+def msgbox(stdscr, title, text):
+    stdscr.timeout(-1)
+    lines = text.split('\n')
+    sh, sw = stdscr.getmaxyx()
+    w = min(sw - 4, max(40, max((str_width(l) for l in lines), default=0) + 4))
+    h = min(sh - 4, len(lines) + 4)
+    y, x = (sh - h) // 2, (sw - w) // 2
+
+    stdscr.erase()
+    draw_box(stdscr, y, x, h, w, title)
+    for i, l in enumerate(lines):
+        if i >= h - 4: break
+        _safe_addstr(stdscr, y + 2 + i, x + 2, l, curses.color_pair(C_MAIN))
+    _safe_addstr(stdscr, y + h - 1, x + w - str_width(t('tui_btn_ok')) - 4, t('tui_btn_ok'), curses.color_pair(C_TITLE))
+    stdscr.refresh()
+    while True:
+        k = stdscr.getch()
+        if k in (10, 13, 27, ord('q'), ord('Q')): break
+
+def menu_dialog(stdscr, title, options, default_idx=0, hint=None, allow_delete=False, allow_undo=False, allow_search=False):
+    if hint is None: hint = t('tui_hint_menu')
+    if allow_search: hint += t('tui_hint_search')
+    stdscr.timeout(-1)
+    sh, sw = stdscr.getmaxyx()
+
+    h = min(sh - 4, len(options) + 4)
+    h = max(h, 6)
+    w = min(sw - 4, max(40, max((str_width(o[0]) for o in options), default=0) + 10))
+    y, x = (sh - h) // 2, (sw - w) // 2
+
+    sel = default_idx
+    filter_str = ""
+    filter_mode = False
+
+    while True:
+        stdscr.erase()
+        draw_box(stdscr, y, x, h, w, title)
+
+        if filter_str:
+            filtered_opts = [o for o in options if filter_str.lower() in o[0].lower()]
+        else:
+            filtered_opts = options
+
+        sel = max(0, min(sel, max(0, len(filtered_opts) - 1)))
+
+        current_hint = t('tui_sm_srch', filter_str) if filter_mode else f" {hint} "
+        _safe_addstr(stdscr, y + h - 1, x + 2, current_hint, curses.color_pair(C_TITLE) | (curses.A_BOLD if filter_mode else 0))
+
+        list_h = h - 2
+        start_idx = max(0, min(sel - list_h // 2, len(filtered_opts) - list_h))
+
+        if not filtered_opts:
+            _safe_addstr(stdscr, y + 1, x + 2, pad_str(t('tui_menu_no_match'), w - 4), curses.color_pair(C_MAIN))
+        else:
+            for i in range(list_h):
+                idx = start_idx + i
+                if idx >= len(filtered_opts): break
+                text = filtered_opts[idx][0]
+
+                disp_w, vis_str = 0, ""
+                for ch in text:
+                    cw = str_width(ch)
+                    if disp_w + cw > w - 4: break
+                    vis_str += ch; disp_w += cw
+
+                attr = curses.color_pair(C_HL) if idx == sel else curses.color_pair(C_MAIN)
+                _safe_addstr(stdscr, y + 1 + i, x + 2, pad_str(vis_str, w - 4), attr)
+
+        stdscr.refresh()
+        try: k = stdscr.get_wch()
+        except curses.error: continue
+        code, char = (k, "") if isinstance(k, int) else (ord(k), k)
+
+        if filter_mode:
+            if code in (27, curses.KEY_F3):
+                filter_mode = False
+                filter_str = ""
+            elif code in (10, 13):
+                filter_mode = False
+                if filtered_opts:
+                    return ('SELECT', filtered_opts[sel][1]) if allow_delete else filtered_opts[sel][1]
+            elif code in (curses.KEY_BACKSPACE, 127, 8):
+                filter_str = filter_str[:-1]
+            elif char.isprintable():
+                filter_str += char
+            continue
+
+        if code in (27, ord('q'), ord('Q')): return ('QUIT', None) if allow_delete else None
+        elif code in (curses.KEY_UP, ord('k')): sel = max(0, sel - 1)
+        elif code in (curses.KEY_DOWN, ord('j')): sel = min(len(filtered_opts) - 1, sel + 1)
+        elif code == ord('/') and allow_search:
+            filter_mode = True
+            filter_str = ""
+        elif code == ord('d') and allow_delete and filtered_opts and filtered_opts[sel][1] != "NEW": return ('DELETE', filtered_opts[sel][1])
+        elif code == ord('u') and allow_undo: return ('UNDO', None)
+        elif code in (10, 13):
+            if not filtered_opts: continue
+            return ('SELECT', filtered_opts[sel][1]) if allow_delete else filtered_opts[sel][1]
+
+def form_dialog(stdscr, title, fields, show_delete=False):
+    stdscr.timeout(-1)
+    sh, sw = stdscr.getmaxyx()
+    h = min(sh - 2, len(fields) * 2 + 6)
+    w = min(sw - 2, 80)
+    y, x = (sh - h) // 2, (sw - w) // 2
+
+    sel = 0
+    mode = "NAV"
+    btn_save_idx = len(fields)
+    btn_cancel_idx = len(fields) + 1
+    btn_del_idx = len(fields) + 2 if show_delete else -1
+    max_sel = len(fields) + (2 if show_delete else 1)
+
+    cursors = [len(str(f["value"])) if f.get("type") != "select" else 0 for f in fields]
+    scrolls = [0 for _ in fields]
+
+    while True:
+        stdscr.erase()
+        draw_box(stdscr, y, x, h, w, title)
+
+        hint = t('tui_hint_form_nav') if mode == "NAV" else t('tui_hint_form_edit')
+        _safe_addstr(stdscr, y + h - 1, x + 2, hint, curses.color_pair(C_TITLE))
+
+        for i, f in enumerate(fields):
+            fy = y + 2 + i * 2
+            # 标签留够宽度给值，超长就截断——否则值区会被挤到 0 宽甚至冲出边框
+            label = truncate_str(f["label"], max(8, w - 24))
+            _safe_addstr(stdscr, fy, x + 2, label, curses.color_pair(C_TITLE))
+            if f.get("hint"):
+                _safe_addstr(stdscr, fy + 1, x + 4, truncate_str(f["hint"], w - 6),
+                             curses.color_pair(C_MAIN) | curses.A_DIM)
+
+            val = str(f["value"])
+            field_w = max(4, w - 6 - str_width(label))
+            fx = x + 4 + str_width(label)
+            attr = curses.color_pair(C_HL) if (sel == i and mode == "NAV") else curses.A_UNDERLINE
+
+            if f.get("type") == "textarea":
+                vis = t('tui_placeholder_ta') if sel == i else val.replace('\n', ' ')
+                _safe_addstr(stdscr, fy, fx, pad_str(truncate_str(vis, field_w), field_w), attr)
+                continue
+
+            if f.get("type") == "select":
+                vis = f" {val} ▾" if sel == i else f" {val}"
+                _safe_addstr(stdscr, fy, fx, pad_str(truncate_str(vis, field_w), field_w), attr)
+                continue
+
+            disp_val = val + " "
+            if cursors[i] < scrolls[i]: scrolls[i] = cursors[i]
+            elif cursors[i] >= scrolls[i] + field_w: scrolls[i] = cursors[i] - field_w + 1
+
+            vis = disp_val[scrolls[i]:scrolls[i]+field_w]
+            cursor_rel = cursors[i] - scrolls[i]
+
+            left_str = vis[:cursor_rel]
+            cursor_char = vis[cursor_rel] if cursor_rel < len(vis) else " "
+            right_str = vis[cursor_rel+1:]
+
+            _safe_addstr(stdscr, fy, fx, left_str, attr)
+            if sel == i and mode == "EDIT":
+                _safe_addstr(stdscr, fy, fx + str_width(left_str), cursor_char, curses.A_REVERSE)
+            else:
+                _safe_addstr(stdscr, fy, fx + str_width(left_str), cursor_char, attr)
+            _safe_addstr(stdscr, fy, fx + str_width(left_str) + str_width(cursor_char), right_str, attr)
+
+            filled = str_width(left_str) + str_width(cursor_char) + str_width(right_str)
+            if filled < field_w:
+                _safe_addstr(stdscr, fy, fx + filled, " " * (field_w - filled), attr)
+
+        by = y + h - 3
+        bx = x + 8
+        _safe_addstr(stdscr, by, bx, t('tui_btn_save'), curses.color_pair(C_HL) if sel == btn_save_idx else curses.color_pair(C_MAIN))
+        bx += str_width(t('tui_btn_save')) + 4
+        _safe_addstr(stdscr, by, bx, t('tui_btn_cancel'), curses.color_pair(C_HL) if sel == btn_cancel_idx else curses.color_pair(C_MAIN))
+        if show_delete:
+            bx += str_width(t('tui_btn_cancel')) + 4
+            _safe_addstr(stdscr, by, bx, t('tui_btn_del'), curses.color_pair(C_ERR) | curses.A_REVERSE if sel == btn_del_idx else curses.color_pair(C_ERR))
+
+        stdscr.refresh()
+        try: k = stdscr.get_wch()
+        except curses.error: continue
+        code, char = (k, "") if isinstance(k, int) else (ord(k), k)
+
+        if mode == "NAV":
+            if code in (27, ord('q'), ord('Q')):
+                return None
+            elif code in (10, 13, ord('i'), ord('I')):
+                if sel == btn_cancel_idx: return None
+                elif sel == btn_save_idx: return [str(f["value"]) for f in fields]
+                elif sel == btn_del_idx: return "DELETE"
+                elif sel < len(fields):
+                    if fields[sel].get("type") == "select":
+                        f_sel = fields[sel]
+                        opts = [(o, o) for o in f_sel["options"]]
+                        try: def_idx = f_sel["options"].index(f_sel["value"])
+                        except: def_idx = 0
+                        choice = menu_dialog(stdscr, f_sel["label"], opts, default_idx=def_idx)
+                        if choice and choice != 'QUIT':
+                            f_sel["value"] = choice
+                    elif fields[sel].get("type") == "textarea":
+                        editor = os.environ.get("EDITOR", "vim")
+                        with tempfile.NamedTemporaryFile(suffix=".txt", mode="w+", delete=False, encoding="utf-8") as tf:
+                            tf.write(fields[sel]["value"])
+                            tf_path = tf.name
+
+                        curses.endwin()
+                        try:
+                            subprocess.run([editor, tf_path])
+                        except Exception:
+                            try: subprocess.run(["nano", tf_path])
+                            except: pass
+                        stdscr.clear()
+                        stdscr.refresh()
+
+                        try:
+                            with open(tf_path, "r", encoding="utf-8") as f:
+                                fields[sel]["value"] = f.read().strip()
+                            os.remove(tf_path)
+                        except Exception: pass
+                        cursors[sel] = 0
+                    else:
+                        mode = "EDIT"
+            elif code == 9: sel = (sel + 1) % (max_sel + 1)
+            elif code in (curses.KEY_DOWN, ord('j')): sel = min(max_sel, sel + 1)
+            elif code in (curses.KEY_UP, ord('k')): sel = max(0, sel - 1)
+            elif sel >= len(fields):
+                if code in (curses.KEY_LEFT, ord('h')): sel = max(len(fields), sel - 1)
+                elif code in (curses.KEY_RIGHT, ord('l')): sel = min(max_sel, sel + 1)
+        else:
+            current_val = str(fields[sel]["value"])
+            c = cursors[sel]
+
+            if code in (27, 10, 13): mode = "NAV"
+            elif code == curses.KEY_LEFT: cursors[sel] = max(0, c - 1)
+            elif code == curses.KEY_RIGHT: cursors[sel] = min(len(current_val), c + 1)
+            elif code in (curses.KEY_BACKSPACE, 127, 8):
+                if c > 0:
+                    fields[sel]["value"] = current_val[:c-1] + current_val[c:]
+                    cursors[sel] -= 1
+            elif char.isprintable():
+                fields[sel]["value"] = current_val[:c] + char + current_val[c:]
+                cursors[sel] += 1
+
+# ==========================================
+# 🌐 获取模型 (智能路由 Anthropic API)
+# ==========================================
+
+def parse_models(data):
+    if isinstance(data, dict):
+        if "data" in data and isinstance(data["data"], list):
+            return[(m.get("id") or m.get("name") or "") for m in data["data"] if isinstance(m, dict)]
+        if "models" in data and isinstance(data["models"], list):
+            return[(m.get("name", "").replace("models/", "") or m.get("id", "")) for m in data["models"] if isinstance(m, dict)]
+    if isinstance(data, list):
+        return[(m.get("id") or m.get("name") or str(m)) if isinstance(m, dict) else str(m) for m in data]
+    return[]
+
+def normalize_api_url(url, protocol="auto"):
+    """
+    智能格式化 API URL：将用户模糊输入的 Base URL 或错误的 Endpoint 统一转为标准对话接口。
+    """
+    url = url.strip().rstrip("/")
+    if not url: return url
+
+    url_lower = url.lower()
+
+    if protocol == "anthropic" or (protocol == "auto" and ("anthropic" in url_lower or "claude" in url_lower)):
+        if url_lower.endswith("/models"):
+            url = url[:-7]
+        if not url_lower.endswith("/messages"):
+            if url_lower.endswith("/v1"): return url + "/messages"
+            return url + "/v1/messages"
+        return url
+
+    if "11434" in url_lower:
+        if url_lower.endswith("/api/tags"): url = url[:-9]
+        elif url_lower.endswith("/v1/models"): url = url[:-10]
+        elif url_lower.endswith("/models"): url = url[:-7]
+
+        if not url_lower.endswith("/chat/completions"):
+            if url_lower.endswith("/v1"): return url + "/chat/completions"
+            elif url_lower.endswith("/api"): return url + "/chat"
+            else: return url + "/v1/chat/completions"
+        return url
+
+    if "generativelanguage" in url_lower:
+        return url
+
+    if not url_lower.endswith("/chat/completions"):
+        if url_lower.endswith("/models"):
+            url = url[:-7]
+        if url_lower.endswith("/v1"):
+            return url + "/chat/completions"
+        else:
+            return url + "/v1/chat/completions"
+
+    return url
+
+def fetch_models(api_url, api_key, profile=None):
+    if profile is not None and profile_is_cli(profile):
+        return cli_model_catalog(stored_protocol(profile), profile_binary(profile)), None
+    url = api_url
+    is_anthropic = (profile is not None and effective_protocol(profile) == "anthropic") or "anthropic" in url or "/messages" in url
+
+    if "11434" in url:
+        url = url.split("/v1/")[0].split("/api/")[0] + "/api/tags"
+    elif "generativelanguage.googleapis.com" in url:
+        url = "https://generativelanguage.googleapis.com/v1beta/models"
+        if api_key: url += f"?key={api_key}"
+    elif is_anthropic:
+        url = url.replace("/messages", "/models")
+    else:
+        url = url.replace("/openai/chat/completions", "/models").replace("/chat/completions", "/models").replace("/text/chatcompletion_v2", "/models")
+        if not url.endswith("/models") and not url.endswith("/tags"): url = url.rstrip("/") + "/models"
+
+    headers = {"User-Agent": "rime-llm", "Accept": "application/json"}
+
+    if api_key and "generativelanguage" not in url:
+        if is_anthropic:
+            headers["x-api-key"] = api_key
+            headers["anthropic-version"] = "2023-06-01"
+        else:
+            headers["Authorization"] = f"Bearer {api_key}"
+            headers["x-api-key"] = api_key
+
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return[m for m in parse_models(json.loads(resp.read().decode("utf-8"))) if m], None
+    except Exception as e:
+        # /models 拿不到时，退到 models.dev 目录里同一供应商的模型清单
+        if profile is not None:
+            key = catalog_provider_for(profile)
+            cat = catalog_load()
+            if key and cat.get(key, {}).get("models"):
+                return sorted(cat[key]["models"].keys()), None
+        return[], str(e)
+
+# ==========================================
+# 🧩 供应商 / 模型编辑器
+# ==========================================
+
+class ProviderEditorTUI:
+    def __init__(self, stdscr, state):
+        self.stdscr = stdscr
+        self.state = state
+        self._sync_from_state()
+        self.active_col, self.prov_idx, self.org_idx, self.model_idx = 0, 0, 0, 0
+        self.scrolls =[0, 0, 0]
+        self.raw_models, self.parsed_tree, self.org_list, self.model_list = [], {}, [],[]
+        self.show_org, self.loading, self.error, self.filter_str, self.filter_mode = False, False, "", "", False
+        self.status_msg, self.status_flash, self.fetch_seq = "", 0, 0
+        self.model_meta = {}
+        self._maybe_refresh_catalog()
+
+    def _maybe_refresh_catalog(self):
+        if not catalog_needs_refresh():
+            return
+        self.status_msg, self.status_flash = t('tui_sm_catalog'), 60
+
+        def worker():
+            try:
+                cat = catalog_refresh()
+                self.status_msg, self.status_flash = t('tui_sm_catalog_ok', len(cat)), 30
+            except Exception:
+                self.status_msg, self.status_flash = t('tui_sm_catalog_fail'), 30
+            self.model_meta = {}
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _sync_from_state(self):
+        self.providers =[]
+        for pid, p in self.state["profiles"].items():
+            tag = profile_tag(p)
+            self.providers.append({"id": pid, "name": p.get("name", pid), "label": (f"[{tag}] " if tag else "") + p.get("name", pid), "api_url": p.get("api_url", ""), "api_key": p.get("api_key", ""), "model": p.get("model", ""), "protocol": stored_protocol(p), "binary": p.get("binary", ""), "source": p.get("source", ""), "profile": p})
+        # 分组：自己的节点 → 本机 CLI → Miyu 导入，组内按名字排
+        self.providers.sort(key=lambda x: ({"": 0, "user": 0, "builtin": 1, "miyu": 2}.get(x.get("source", ""), 0), x["name"].lower()))
+        if not self.providers: self.providers.append({"id": "empty", "name": "No Providers", "label": "No Providers", "api_url": "", "api_key": "", "model": "", "protocol": "auto", "source": "", "profile": {}})
+
+    def run(self):
+        self._trigger_fetch()
+        while True:
+            self.stdscr.timeout(100)
+            self._draw()
+            try: k = self.stdscr.get_wch()
+            except curses.error:
+                if self.status_flash > 0: self.status_flash -= 1
+                else: self.status_msg = ""
+                continue
+
+            self.stdscr.timeout(-1)
+            if not self._handle_key(k): break
+
+    def _trigger_fetch(self):
+        if not self.providers or self.providers[0]["id"] == "empty": return
+        prov = self.providers[self.prov_idx]
+        self.raw_models, self.parsed_tree, self.org_list, self.model_list = [], {},[],[]
+        self.org_idx, self.model_idx, self.scrolls[1], self.scrolls[2] = 0, 0, 0, 0
+        self.filter_str, self.filter_mode, self.loading, self.error, self.show_org = "", False, True, "", False
+        self.model_meta = {}
+        self.fetch_seq += 1
+        seq = self.fetch_seq
+
+        def worker():
+            m, err = fetch_models(prov["api_url"], prov["api_key"], prov["profile"])
+            if getattr(self, 'fetch_seq', 0) != seq: return
+            self.raw_models, self.error, self.loading = m, err or "", False
+            self._rebuild_tree()
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _rebuild_tree(self):
+        if not self.raw_models:
+            self.org_list, self.show_org =[], False
+            self._update_model_list()
+            return
+        prov = self.providers[self.prov_idx]
+        f = self.filter_str.lower()
+        v_models =[m for m in self.raw_models if not f or f in m.lower()]
+        self.parsed_tree = {"All":[]}
+        for m in v_models:
+            org = m.split("/", 1)[0] if "/" in m else prov["name"]
+            self.parsed_tree["All"].append({"name": m.split("/", 1)[-1] if "/" in m else m, "full": m})
+            if org.lower() not in ["models", prov["name"].lower()]:
+                if org not in self.parsed_tree: self.parsed_tree[org] =[]
+                self.parsed_tree[org].append({"name": m.split("/", 1)[-1], "full": m})
+        self.org_list = ["All"] + sorted([k for k in self.parsed_tree.keys() if k != "All"])
+        self.show_org = len(self.org_list) > 1
+        self.org_idx = min(self.org_idx, max(0, len(self.org_list) - 1))
+        self._update_model_list()
+
+    def _update_model_list(self):
+        if not self.org_list: self.model_list =[]
+        else: self.model_list = sorted(self.parsed_tree[self.org_list[self.org_idx]], key=lambda x: x["name"].lower())
+        self.model_idx = min(self.model_idx, max(0, len(self.model_list) - 1))
+
+        if not self.show_org and self.active_col == 1: self.active_col = 2
+
+    def _variants_for(self, model):
+        """当前供应商下某个模型的思考档位（带缓存，避免每帧查目录）。"""
+        prov = self.providers[self.prov_idx]
+        cache_key = (prov["id"], model)
+        if cache_key not in self.model_meta:
+            self.model_meta[cache_key] = reasoning_variants(prov["profile"], model, prov["id"])
+        return self.model_meta[cache_key]
+
+    def _pick_thinking(self, model):
+        prov = self.providers[self.prov_idx]
+        variants, family = self._variants_for(model)
+        if len(variants) <= 1:
+            self.status_msg, self.status_flash = t('tui_sm_think_none'), 30
+            return
+        profile = self.state["profiles"][prov["id"]]
+        current = profile_thinking(profile, model) or "off"
+        opts = [(variant_label(v, family), v) for v in variants]
+        try: def_idx = variants.index(current)
+        except ValueError: def_idx = 0
+        choice = menu_dialog(self.stdscr, t('tui_sm_think_title', model), opts, default_idx=def_idx)
+        if not choice or choice == 'QUIT':
+            return
+        set_profile_thinking(profile, model, choice)
+        save_state(self.state)
+        self._sync_from_state()
+        self.model_meta = {}
+        self.status_msg, self.status_flash = t('tui_sm_think_set', model, variant_label(choice, family)), 30
+
+    def _handle_key(self, k):
+        code, char = (k, "") if isinstance(k, int) else (ord(k), k)
+
+        if self.filter_mode:
+            if code in (27, curses.KEY_F3):
+                self.filter_mode = False
+                self.filter_str = ""
+                self._rebuild_tree()
+                return True
+            elif code in (10, 13):
+                self.filter_mode = False
+                return True
+            elif code in (curses.KEY_BACKSPACE, 127, 8):
+                self.filter_str = self.filter_str[:-1]; self._rebuild_tree()
+            elif char.isprintable():
+                self.filter_str += char; self._rebuild_tree()
+            return True
+
+        if code in (27, ord('q'), ord('Q')): return False
+
+        has_provider = self.providers and self.providers[0]["id"] != "empty"
+
+        if code == curses.KEY_LEFT or char.lower() == 'h':
+            if self.active_col == 2: self.active_col = 1 if self.show_org else 0
+            elif self.active_col == 1: self.active_col = 0
+        elif code == curses.KEY_RIGHT or char.lower() == 'l':
+            if self.active_col == 0: self.active_col = 1 if self.show_org and self.org_list else (2 if not self.show_org and self.model_list else 0)
+            elif self.active_col == 1 and self.model_list: self.active_col = 2
+        elif code == curses.KEY_DOWN or char.lower() == 'j':
+            if self.active_col == 0 and self.prov_idx < len(self.providers) - 1: self.prov_idx += 1; self._trigger_fetch()
+            elif self.active_col == 1 and self.org_idx < len(self.org_list) - 1: self.org_idx += 1; self._update_model_list()
+            elif self.active_col == 2 and self.model_idx < len(self.model_list) - 1: self.model_idx += 1
+        elif code == curses.KEY_UP or char.lower() == 'k':
+            if self.active_col == 0 and self.prov_idx > 0: self.prov_idx -= 1; self._trigger_fetch()
+            elif self.active_col == 1 and self.org_idx > 0: self.org_idx -= 1; self._update_model_list()
+            elif self.active_col == 2 and self.model_idx > 0: self.model_idx -= 1
+        elif char == '/':
+            self.filter_mode = True
+            self.filter_str = ""
+            self._rebuild_tree()
+        elif char.lower() == 'r': self._trigger_fetch()
+        elif char.lower() == 't' and has_provider:
+            if self.active_col == 2 and self.model_list:
+                self._pick_thinking(self.model_list[self.model_idx]["full"])
+            elif self.providers[self.prov_idx]["model"]:
+                self._pick_thinking(self.providers[self.prov_idx]["model"])
+            else:
+                self.status_msg, self.status_flash = t('tui_sm_think_none'), 30
+        elif char.lower() == 'a':
+            proto_opts = [protocol_label(p) for p in HTTP_PROTOCOLS]
+            res = form_dialog(self.stdscr, t('tui_sm_add_prov'),[
+                {"label": t('tui_sm_lbl_id'),"value":""}, {"label":t('tui_sm_lbl_name'),"value":""},
+                {"label":t('tui_sm_lbl_url'),"value":""}, {"label":t('tui_sm_lbl_key'),"value":""},
+                {"label":t('tui_sm_lbl_protocol'),"value":proto_opts[0],"type":"select","options":proto_opts}])
+            if res:
+                pid = res[0].strip()
+                if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', pid):
+                    self.status_msg, self.status_flash = t('tui_sm_err_id_invalid'), 30
+                    return True
+                if pid in self.state["profiles"]:
+                    self.status_msg, self.status_flash = t('tui_sm_err_id_exist'), 30
+                    return True
+
+                proto = protocol_from_label(res[4])
+                norm_url = normalize_api_url(res[2], proto)
+                self.state["profiles"][pid] = {"name": res[1], "protocol": proto, "api_url": norm_url, "api_key": res[3], "model": "", "thinking": {}}
+                save_state(self.state)
+                self._sync_from_state()
+                for i, prov in enumerate(self.providers):
+                    if prov["id"] == pid: self.prov_idx = i; break
+                self._trigger_fetch()
+        elif char.lower() == 'd' and self.active_col == 0 and has_provider:
+            pid = self.providers[self.prov_idx]["id"]
+            if self.providers[self.prov_idx].get("source") in ("builtin", "miyu"):
+                self.status_msg, self.status_flash = t('tui_sm_err_ext_del'), 40
+                return True
+            if pid == self.state.get("active_profile"): self.state["active_profile"] = ""
+            del self.state["profiles"][pid]
+            save_state(self.state); self.prov_idx = max(0, self.prov_idx - 1); self._sync_from_state(); self._trigger_fetch()
+        elif code in (ord('i'), ord('I')) or (code in (10, 13) and self.active_col == 0):
+            if not has_provider:
+                return True
+            if self.active_col == 2 and self.model_list:
+                # i 在模型列上等同回车：设首选模型
+                return self._set_model()
+            p = self.providers[self.prov_idx]
+            if is_cli_protocol(p["protocol"]):
+                self._edit_cli_profile(p)
+            else:
+                self._edit_http_profile(p)
+        elif code in (10, 13):
+            if self.active_col == 2 and self.model_list:
+                return self._set_model()
+
+        if self.status_flash > 0: self.status_flash -= 1
+        else: self.status_msg = ""
+        return True
+
+    def _set_model(self):
+        m = self.model_list[self.model_idx]["full"]
+        pid = self.providers[self.prov_idx]["id"]
+        self.state["profiles"][pid]["model"] = m
+        save_state(self.state); self._sync_from_state()
+        self.status_msg, self.status_flash = t('tui_sm_set_succ', m, self.providers[self.prov_idx]['name']), 30
+        return True
+
+    def _edit_cli_profile(self, p):
+        fields_config = [
+            {"label": t('tui_sm_lbl_id'), "value": p["id"]},
+            {"label": t('tui_sm_lbl_name'), "value": p["name"]},
+            {"label": t('tui_sm_lbl_binary'), "value": p["binary"] or CLI_BACKENDS[p["protocol"]]["binary"]},
+        ]
+        res = form_dialog(self.stdscr, t('tui_sm_edit_prov', p['name']), fields_config)
+        if not res:
+            return
+        if p.get("source") in ("builtin", "miyu"):
+            if res[0].strip() != p["id"] or res[1] != p["name"] or res[2].strip() != (p["binary"] or CLI_BACKENDS[p["protocol"]]["binary"]):
+                self.status_msg, self.status_flash = t('tui_sm_err_external', p["source"]), 40
+            return
+        new_id = res[0].strip()
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', new_id):
+            self.status_msg, self.status_flash = t('tui_sm_err_id_invalid'), 30
+            return
+        if new_id != p["id"] and new_id in self.state["profiles"]:
+            self.status_msg, self.status_flash = t('tui_sm_err_id_exist'), 30
+            return
+        if new_id != p["id"]:
+            self.state["profiles"][new_id] = self.state["profiles"].pop(p["id"])
+            if self.state.get("active_profile") == p["id"]: self.state["active_profile"] = new_id
+        self.state["profiles"][new_id].update({"name": res[1], "binary": res[2].strip()})
+        save_state(self.state)
+        self._sync_from_state()
+        self._trigger_fetch()
+
+    def _edit_http_profile(self, p):
+        proto_opts = [protocol_label(x) for x in HTTP_PROTOCOLS]
+        fields_config = [
+            {"label":t('tui_sm_lbl_id'),"value":p["id"]},
+            {"label":t('tui_sm_lbl_name'),"value":p["name"]},
+            {"label":t('tui_sm_lbl_url'),"value":p["api_url"]},
+            {"label":t('tui_sm_lbl_key'),"value":p["api_key"]},
+            {"label":t('tui_sm_lbl_protocol'),"value":protocol_label(p["protocol"]),"type":"select","options":proto_opts},
+        ]
+        res = form_dialog(self.stdscr, t('tui_sm_edit_prov', p['name']), fields_config)
+        if not res:
+            return
+        if p.get("source") == "miyu":
+            if res[0].strip() != p["id"] or res[1] != p["name"] or res[2] != p["api_url"] or res[3] != p["api_key"] or protocol_from_label(res[4]) != p["protocol"]:
+                self.status_msg, self.status_flash = t('tui_sm_err_external', "miyu"), 40
+            return
+        new_id = res[0].strip()
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', new_id):
+            self.status_msg, self.status_flash = t('tui_sm_err_id_invalid'), 30
+            return
+        if new_id != p["id"] and new_id in self.state["profiles"]:
+            self.status_msg, self.status_flash = t('tui_sm_err_id_exist'), 30
+            return
+        if new_id != p["id"]:
+            self.state["profiles"][new_id] = self.state["profiles"].pop(p["id"])
+            if self.state.get("active_profile") == p["id"]:
+                self.state["active_profile"] = new_id
+        proto = protocol_from_label(res[4])
+        norm_url = normalize_api_url(res[2], proto)
+        self.state["profiles"][new_id].update({"name": res[1], "api_url": norm_url, "api_key": res[3], "protocol": proto})
+        save_state(self.state)
+        self._sync_from_state()
+        for i, prov in enumerate(self.providers):
+            if prov["id"] == new_id: self.prov_idx = i; break
+        self._trigger_fetch()
+
+    def _draw(self):
+        self.stdscr.erase()
+        h, w = self.stdscr.getmaxyx()
+        w1 = max(22, min(36, max((str_width(p["label"]) for p in self.providers), default=20) + 4))
+        w2 = max(22, min(32, max((str_width(o) for o in self.org_list), default=20) + 4)) if self.show_org else 0
+        w3 = w - w1 - w2 - (2 if self.show_org else 1)
+
+        for row in range(0, h):
+            _safe_addstr(self.stdscr, row, w1, "│", curses.color_pair(C_TITLE) | curses.A_DIM)
+            if self.show_org: _safe_addstr(self.stdscr, row, w1 + 1 + w2, "│", curses.color_pair(C_TITLE) | curses.A_DIM)
+
+        if self.status_msg: msg, attr = f" {self.status_msg} ", curses.color_pair(C_SUCCESS)|curses.A_BOLD
+        elif self.filter_mode: msg, attr = t('tui_sm_srch', self.filter_str), curses.color_pair(C_TITLE)|curses.A_BOLD
+        else: msg, attr = t('tui_sm_nav'), curses.color_pair(C_TITLE)
+
+        _safe_addstr(self.stdscr, h - 1, 0, pad_str(msg, w)[:w], attr)
+
+        self._draw_list(0, h - 1, w1, t('tui_sm_prov'), [p["label"] for p in self.providers], self.prov_idx, 0, 0)
+        if self.show_org:
+            self._draw_list(w1 + 1, h - 1, w2, t('tui_sm_org'), self.org_list, self.org_idx, 1, 1)
+            m_x = w1 + 1 + w2 + 1
+        else:
+            m_x = w1 + 1
+
+        self._draw_models(m_x, h - 1, w3, 2)
+        self.stdscr.refresh()
+
+    def _draw_list(self, x_offset, h, w, title, items, cur_idx, scroll_idx, col_idx):
+        _safe_addstr(self.stdscr, 0, x_offset, "─" * w, curses.color_pair(C_TITLE) | curses.A_DIM)
+        _safe_addstr(self.stdscr, 0, x_offset + max(0, (w - str_width(title)) // 2), title, curses.color_pair(C_HL if self.active_col == col_idx else C_TITLE))
+        list_h = h - 2
+        if cur_idx < self.scrolls[scroll_idx]: self.scrolls[scroll_idx] = cur_idx
+        elif cur_idx >= self.scrolls[scroll_idx] + list_h: self.scrolls[scroll_idx] = cur_idx - list_h + 1
+        for i in range(list_h):
+            idx = i + self.scrolls[scroll_idx]
+            if idx >= len(items): break
+            is_cur = (idx == cur_idx) and (col_idx <= self.active_col)
+            attr = curses.color_pair(C_HL) if (is_cur and self.active_col == col_idx) else (curses.color_pair(C_TITLE)|curses.A_REVERSE if is_cur else curses.color_pair(C_TITLE))
+
+            disp_w, vis_str = 0, ""
+            prefix = "► " if is_cur and self.active_col == col_idx else "  "
+            for ch in prefix + items[idx]:
+                cw = str_width(ch)
+                if disp_w + cw > w - 1: break
+                vis_str += ch; disp_w += cw
+
+            _safe_addstr(self.stdscr, i + 1, x_offset, pad_str(vis_str, w - 1), attr)
+        _safe_addstr(self.stdscr, h - 1, x_offset, "─" * w, curses.color_pair(C_TITLE) | curses.A_DIM)
+
+    def _draw_models(self, x_offset, h, w, col_idx):
+        title = t('tui_sm_mod_srch', self.filter_str) if self.filter_str else t('tui_sm_mod')
+        _safe_addstr(self.stdscr, 0, x_offset, "─" * w, curses.color_pair(C_TITLE) | curses.A_DIM)
+        _safe_addstr(self.stdscr, 0, x_offset + max(0, (w - str_width(title)) // 2), title, curses.color_pair(C_HL if self.active_col == col_idx else C_TITLE))
+
+        if self.loading:
+            _safe_addstr(self.stdscr, 2, x_offset + 2, t('tui_sm_fetch'), curses.color_pair(C_TITLE))
+        elif self.error:
+            err_str = t('tui_sm_err', str(self.error).replace('\n', ' '))
+            err_msg = truncate_str(err_str, w - 4)
+            _safe_addstr(self.stdscr, 2, x_offset + 2, err_msg, curses.color_pair(C_ERR))
+        elif not self.model_list:
+            _safe_addstr(self.stdscr, 2, x_offset + 2, t('tui_sm_no_mod'), curses.color_pair(C_TITLE))
+        else:
+            prov = self.providers[self.prov_idx]
+            list_h = h - 2
+            if self.model_idx < self.scrolls[2]: self.scrolls[2] = self.model_idx
+            elif self.model_idx >= self.scrolls[2] + list_h: self.scrolls[2] = self.model_idx - list_h + 1
+            for i in range(list_h):
+                idx = i + self.scrolls[2]
+                if idx >= len(self.model_list): break
+                full = self.model_list[idx]["full"]
+                m_name = self.model_list[idx]['name']
+                variants, family = self._variants_for(full)
+                if len(variants) > 1:
+                    m_name += " " + t('tui_sm_think_mark')
+                if prov["model"] == full:
+                    vid = profile_thinking(prov["profile"], full)
+                    m_name += " [Current]"
+                    if len(variants) > 1:
+                        m_name += " (" + t('tui_sm_think_tag', variant_label(vid or 'off', family)) + ")"
+                is_cur = (idx == self.model_idx) and (self.active_col >= col_idx)
+                attr = curses.color_pair(C_HL) if (is_cur and self.active_col == col_idx) else (curses.color_pair(C_TITLE)|curses.A_REVERSE if is_cur else curses.color_pair(C_TITLE))
+
+                disp_w, vis_str = 0, ""
+                prefix = "► " if is_cur and self.active_col == col_idx else "  "
+                for ch in prefix + m_name:
+                    cw = str_width(ch)
+                    if disp_w + cw > w - 1: break
+                    vis_str += ch; disp_w += cw
+
+                _safe_addstr(self.stdscr, i + 1, x_offset, pad_str(vis_str, w - 1), attr)
+        _safe_addstr(self.stdscr, h - 1, x_offset, "─" * w, curses.color_pair(C_TITLE) | curses.A_DIM)
+
+# ==========================================
+# 🚀 主运行程序
+# ==========================================
+
+def run_app(stdscr):
+    init_colors()
+    curses.curs_set(0)
+    state = load_state()
+
+    while True:
+        act_name = state["profiles"].get(state.get("active_profile", ""), {}).get("name", "None")
+        main_opts =[
+            (t('tui_opt_switch', act_name), "switch"),
+            (t('tui_opt_edit'), "edit_profiles"),
+            (t('tui_opt_settings'), "edit_settings"),
+            (t('tui_opt_vocab'), "edit_vocab"),
+            (t('tui_opt_prefix'), "edit_prefix"),
+            (t('tui_opt_saver'), "edit_saver"),
+            (t('tui_opt_miyu', str(state["settings"].get("miyu_prefix", "") or "").strip() or t('tui_miyu_off')), "edit_miyu"),
+            (t('tui_opt_export'), "export")
+        ]
+
+        choice = menu_dialog(stdscr, t('tui_main_title'), main_opts)
+        if choice in (None, "QUIT", "exit"): break
+
+        if choice == "switch":
+            valid_opts =[]
+            for k, v in state["profiles"].items():
+                if profile_is_usable(v):
+                    tag = profile_tag(v)
+                    think = profile_thinking(v)
+                    extra = f" ({variant_label(think)})" if think and think != "off" else ""
+                    valid_opts.append((f"{('[' + tag + '] ') if tag else ''}{v.get('name', k)} [{v.get('model')}]{extra}", k))
+            if not valid_opts:
+                msgbox(stdscr, t('msg_info'), t('tui_sw_err'))
+                continue
+
+            res = menu_dialog(stdscr, t('tui_sw_title'), valid_opts, allow_search=True)
+            if res and res != 'QUIT': state["active_profile"] = res; save_state(state)
+
+        elif choice == "edit_profiles":
+            ProviderEditorTUI(stdscr, state).run()
+
+        elif choice == "edit_settings":
+            s = state["settings"]
+
+            fields_config = [
+                {"label": t('tui_st_prompt'), "value": s.get("prompt", ""), "type": "textarea"},
+                {"label": t('tui_st_trigger'), "value": s.get("ai_trigger", "vv")},
+                {"label": t('tui_st_tokens'), "value": str(s.get("max_tokens", 4000))},
+                {"label": t('tui_st_temp'), "value": str(s.get("temperature", 0.1))},
+                {"label": t('tui_st_time'), "value": str(s.get("max_time", 30.0))},
+                {"label": t('tui_st_history_bytes'), "value": str(s.get("max_history_bytes", 240))},
+                {"label": t('tui_st_cli_timeout'), "value": str(s.get("cli_timeout", DEFAULT_CLI_TIMEOUT))},
+            ]
+
+            res = form_dialog(stdscr, t('tui_st_title'), fields_config)
+            if res:
+                s["prompt"], s["ai_trigger"] = res[0], (res[1].strip() or "vv")
+                s["max_tokens"] = int(res[2]) if res[2].isdigit() else 4000
+                s["temperature"] = float(res[3]) if res[3].replace('.','',1).isdigit() else 0.1
+                s["max_time"] = float(res[4]) if res[4].replace('.','',1).isdigit() else 30.0
+                s["max_history_bytes"] = int(res[5]) if res[5].isdigit() else 240
+                s["cli_timeout"] = float(res[6]) if res[6].replace('.','',1).isdigit() else DEFAULT_CLI_TIMEOUT
+                save_state(state)
+
+        elif choice == "edit_miyu":
+            s = state["settings"]
+            try:
+                find_miyu(s)
+            except Exception as e:
+                msgbox(stdscr, t('msg_info'), t('tui_miyu_bad', e))
+            fields_miyu = [
+                {"label": t('tui_st_miyu_prefix'), "value": str(s.get("miyu_prefix", DEFAULT_MIYU_PREFIX) or "")},
+                {"label": t('tui_st_miyu_session'), "value": str(s.get("miyu_session", DEFAULT_MIYU_SESSION) or "")},
+                {"label": t('tui_st_miyu_timeout'), "value": str(s.get("miyu_timeout", DEFAULT_MIYU_TIMEOUT))},
+                {"label": t('tui_st_miyu_wait'), "value": str(s.get("miyu_wait", DEFAULT_MIYU_WAIT))},
+                {"label": t('tui_st_miyu_tools'), "value": t('tui_yes') if s.get("miyu_tools") else t('tui_no'),
+                 "type": "select", "options": [t('tui_no'), t('tui_yes')]},
+                {"label": t('tui_st_miyu_binary'), "value": str(s.get("miyu_binary", "") or "")},
+                {"label": t('tui_st_miyu_prompt'), "value": s.get("miyu_prompt", DEFAULT_MIYU_PROMPT), "type": "textarea"},
+            ]
+            res = form_dialog(stdscr, t('tui_miyu_title'), fields_miyu)
+            if res:
+                s["miyu_prefix"] = res[0].strip()
+                s["miyu_session"] = res[1].strip() or DEFAULT_MIYU_SESSION
+                s["miyu_timeout"] = float(res[2]) if res[2].replace('.','',1).isdigit() else DEFAULT_MIYU_TIMEOUT
+                s["miyu_wait"] = float(res[3]) if res[3].replace('.','',1).isdigit() else DEFAULT_MIYU_WAIT
+                s["miyu_tools"] = (res[4] == t('tui_yes'))
+                s["miyu_binary"] = res[5].strip()
+                s["miyu_prompt"] = res[6].strip() or DEFAULT_MIYU_PROMPT
+                save_state(state)
+
+        elif choice == "edit_prefix":
+            last_deleted_rule = None
+            while True:
+                pf = state.setdefault("prefixes", default_prefixes())
+                pos_labels = {"system": t('tui_px_pos_system'), "user_before": t('tui_px_pos_before'),
+                              "user_after": t('tui_px_pos_after')}
+                p_choice = menu_dialog(stdscr, t('tui_px_title'), [
+                    (t('tui_px_opt_rules'), "rules"),
+                    (t('tui_px_opt_combo'), "combo"),
+                    (t('tui_px_opt_fallback'), "fallback"),
+                    (f"{t('tui_px_opt_pos')}  [{pos_labels[prefix_position(state['settings'])]}]", "pos"),
+                ])
+                if p_choice in (None, 'QUIT'):
+                    break
+
+                if p_choice == "rules":
+                    while True:
+                        rules = pf.setdefault("rules", [])
+                        opts = [(f"{r.get('key','')}: {str(r.get('rule','')).splitlines()[0][:46]}", r.get("key", ""))
+                                for r in rules if isinstance(r, dict)]
+                        sel_action, sel_val = menu_dialog(
+                            stdscr, t('tui_px_rules_title'), opts + [(t('tui_px_add'), "NEW")],
+                            hint=t('tui_hint_menu_del'), allow_delete=True, allow_undo=True, allow_search=True) or (None, None)
+                        if sel_action in (None, 'QUIT'):
+                            break
+                        idx = next((i for i, r in enumerate(rules) if r.get("key") == sel_val), None)
+                        if sel_action == 'DELETE' and idx is not None:
+                            last_deleted_rule = (idx, rules.pop(idx)); save_state(state)
+                        elif sel_action == 'UNDO' and last_deleted_rule:
+                            rules.insert(min(last_deleted_rule[0], len(rules)), last_deleted_rule[1])
+                            save_state(state); last_deleted_rule = None
+                        elif sel_action == 'SELECT':
+                            is_new = sel_val == "NEW"
+                            cur = {"key": "", "rule": ""} if is_new else rules[idx]
+                            res = form_dialog(
+                                stdscr, t('tui_px_fm_add') if is_new else t('tui_px_fm_edit'),
+                                [{"label": t('tui_lbl_prefix'), "value": cur.get("key", ""),
+                                  "hint": t('tui_px_key_hint')},
+                                 {"label": t('tui_lbl_rule'), "value": cur.get("rule", ""), "type": "textarea"}],
+                                show_delete=not is_new)
+                            if res == "DELETE" and idx is not None:
+                                last_deleted_rule = (idx, rules.pop(idx)); save_state(state)
+                            elif isinstance(res, list):
+                                key = res[0].strip().lower().strip(":：")
+                                if not re.fullmatch(r"[a-z]+", key or ""):
+                                    msgbox(stdscr, t('msg_info'), t('tui_px_bad_key'))
+                                elif res[1].strip():
+                                    entry = {"key": key, "rule": res[1].strip()}
+                                    # 先把这一条和任何同名的摘掉，再插回原来的位置——改名撞上
+                                    # 已有前缀时不会留下两条同名的
+                                    kept = [r for i, r in enumerate(rules)
+                                            if r.get("key") != key and (is_new or i != idx)]
+                                    at = len(kept) if is_new or idx is None else min(idx, len(kept))
+                                    kept.insert(at, entry)
+                                    rules[:] = kept
+                                    save_state(state)
+
+                elif p_choice in ("combo", "fallback"):
+                    is_combo = p_choice == "combo"
+                    field = {"label": t('tui_lbl_rule'), "type": "textarea",
+                             "value": str(pf.get(p_choice, "") or "")}
+                    if not is_combo:
+                        field["hint"] = t('tui_px_fallback_hint')
+                    res = form_dialog(stdscr, t('tui_px_combo_title') if is_combo else t('tui_px_fallback_title'),
+                                      [field])
+                    if isinstance(res, list):
+                        pf[p_choice] = res[0].strip(); save_state(state)
+
+                elif p_choice == "pos":
+                    cur = prefix_position(state["settings"])
+                    order = ["user_before", "user_after", "system"]
+                    sel = menu_dialog(stdscr, t('tui_px_pos_title'), [(pos_labels[k], k) for k in order],
+                                      default_idx=order.index(cur) if cur in order else 0)
+                    if sel and sel != 'QUIT':
+                        state["settings"]["prefix_position"] = sel; save_state(state)
+
+        elif choice == "edit_saver":
+            s = state["settings"]
+            auto_l, all_l = t('tui_inject_auto'), t('tui_inject_all')
+            yes_l, no_l = t('tui_yes'), t('tui_no')
+
+            def _pick(flag, on=None, off=None):
+                return (on or yes_l) if flag else (off or no_l)
+
+            fields_saver = [
+                {"label": t('tui_sv_prefix'), "type": "select", "options": [auto_l, all_l],
+                 "value": _pick(str(s.get("prefix_inject", "auto")) == "auto", auto_l, all_l)},
+                {"label": t('tui_sv_vocab'), "type": "select", "options": [auto_l, all_l],
+                 "value": _pick(str(s.get("vocab_inject", "auto")) == "auto", auto_l, all_l)},
+                {"label": t('tui_sv_nohist'), "value": str(s.get("no_history_prefixes", DEFAULT_NO_HISTORY_PREFIXES) or "")},
+                {"label": t('tui_sv_adaptive'), "type": "select", "options": [yes_l, no_l],
+                 "value": _pick(s.get("adaptive_max_tokens", True))},
+                {"label": t('tui_sv_mark'), "type": "select", "options": [yes_l, no_l],
+                 "value": _pick(s.get("prompt_cache_mark", True))},
+                {"label": t('tui_sv_disk'), "type": "select", "options": [yes_l, no_l],
+                 "value": _pick(s.get("reply_cache_disk", True))},
+                {"label": t('tui_sv_disk_min'), "value": str(s.get("reply_cache_min_len", DEFAULT_REPLY_CACHE_MIN_LEN))},
+                {"label": t('tui_sv_disk_max'), "value": str(s.get("reply_cache_max", DEFAULT_REPLY_CACHE_MAX))},
+                {"label": t('tui_sv_reset'), "type": "select", "options": [no_l, yes_l], "value": no_l},
+            ]
+            res = form_dialog(stdscr, t('tui_sv_title'), fields_saver)
+            if res:
+                s["prefix_inject"] = "auto" if res[0] == auto_l else "always"
+                s["vocab_inject"] = "auto" if res[1] == auto_l else "always"
+                s["no_history_prefixes"] = res[2].strip()
+                s["adaptive_max_tokens"] = (res[3] == yes_l)
+                s["prompt_cache_mark"] = (res[4] == yes_l)
+                s["reply_cache_disk"] = (res[5] == yes_l)
+                s["reply_cache_min_len"] = int(res[6]) if res[6].isdigit() else DEFAULT_REPLY_CACHE_MIN_LEN
+                s["reply_cache_max"] = int(res[7]) if res[7].isdigit() else DEFAULT_REPLY_CACHE_MAX
+                reset_prompt = res[8] == yes_l
+                if reset_prompt:
+                    default_prompt = get_default_state().get("settings", {}).get("prompt", "")
+                    if default_prompt:
+                        s["prompt"] = default_prompt
+                save_state(state)
+                if reset_prompt:
+                    msgbox(stdscr, t('msg_info'), t('tui_sv_reset_done'))
+
+        elif choice == "edit_vocab":
+            last_deleted_term, last_deleted_map = None, None
+            while True:
+                v_choice = menu_dialog(stdscr, t('tui_vc_title'),[(t('tui_vc_opt_term'), "terms"), (t('tui_vc_opt_map'), "mapping")])
+                if v_choice in (None, 'QUIT'): break
+                if v_choice == "terms":
+                    while True:
+                        terms = state["vocab"].setdefault("terms",[])
+                        sel_action, sel_val = menu_dialog(stdscr, t('tui_vc_term_title'), [(x, x) for x in terms] +[(t('tui_vc_add_term'), "NEW")], hint=t('tui_hint_menu_del'), allow_delete=True, allow_undo=True, allow_search=True) or (None, None)
+                        if sel_action in (None, 'QUIT'): break
+                        if sel_action == 'DELETE':
+                            last_deleted_term = sel_val; terms.remove(sel_val); save_state(state)
+                        elif sel_action == 'UNDO' and last_deleted_term:
+                            terms.append(last_deleted_term); save_state(state); last_deleted_term = None
+                        elif sel_action == 'SELECT':
+                            if sel_val == "NEW":
+                                res = form_dialog(stdscr, t('tui_vc_fm_add_term'), [{"label": t('tui_lbl_term'), "value": ""}])
+                                if res and res[0]: terms.append(res[0]); save_state(state)
+                            else:
+                                res = form_dialog(stdscr, t('tui_vc_fm_edit_term'),[{"label": t('tui_lbl_term'), "value": sel_val}], show_delete=True)
+                                if res == "DELETE":
+                                    terms.remove(sel_val); save_state(state)
+                                elif isinstance(res, list) and res[0].strip():
+                                    terms.remove(sel_val); terms.append(res[0].strip()); save_state(state)
+                elif v_choice == "mapping":
+                    while True:
+                        maps = state["vocab"].setdefault("mappings", {})
+                        sel_action, sel_val = menu_dialog(stdscr, t('tui_vc_map_title'),[(f"{k} = {v}", k) for k, v in maps.items()] +[(t('tui_vc_add_map'), "NEW")], hint=t('tui_hint_menu_del'), allow_delete=True, allow_undo=True, allow_search=True) or (None, None)
+                        if sel_action in (None, 'QUIT'): break
+                        if sel_action == 'DELETE':
+                            last_deleted_map = (sel_val, maps[sel_val]); del maps[sel_val]; save_state(state)
+                        elif sel_action == 'UNDO' and last_deleted_map:
+                            maps[last_deleted_map[0]] = last_deleted_map[1]; save_state(state); last_deleted_map = None
+                        elif sel_action == 'SELECT':
+                            if sel_val == "NEW":
+                                res = form_dialog(stdscr, t('tui_vc_fm_add_map'),[{"label": t('tui_lbl_pinyin'), "value": ""}, {"label": t('tui_lbl_result'), "value": ""}])
+                                if res and res[0] and res[1]: maps[res[0]] = res[1]; save_state(state)
+                            else:
+                                res = form_dialog(stdscr, t('tui_vc_fm_edit_map'),[{"label": t('tui_lbl_pinyin'), "value": sel_val}, {"label": t('tui_lbl_result'), "value": maps[sel_val]}], show_delete=True)
+                                if res == "DELETE":
+                                    del maps[sel_val]; save_state(state)
+                                elif isinstance(res, list) and res[0].strip():
+                                    del maps[sel_val]; maps[res[0].strip()] = res[1]; save_state(state)
+
+        elif choice == "export":
+            try:
+                save_state(state, export=False)
+                out = export_to_lua(state)
+                msgbox(stdscr, t('tui_exp_succ'), t('tui_exp_msg', out))
+                break
+            except Exception as e:
+                msgbox(stdscr, t('tui_exp_err'), str(e))
+
+if __name__ == "__main__":
+    if cli_handler(): sys.exit(0)
+    try: curses.wrapper(run_app)
+    except KeyboardInterrupt: pass
+    except Exception as e: print(f"Fatal error: {e}")

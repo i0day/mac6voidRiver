@@ -1,0 +1,14 @@
+#!/bin/sh
+# Big on-screen keystroke display (screenkey) for tutorial/recording use.
+# Plain `screenkey` defaults are too small to read in recordings — always launch large.
+export DISPLAY="${DISPLAY:-:0}"
+exec screenkey \
+    --position fixed \
+    -g 1366x45+0+723 \
+    --multiline \
+    --persist \
+    --no-systray \
+    --opacity 0.85 \
+    --vis-shift \
+    --mods-mode mac \
+    "$@"

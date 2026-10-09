@@ -1,0 +1,245 @@
+#!/bin/bash
+# bt-earbud: dmenu 切换蓝牙耳机（连接/断开已配对设备）
+# 键绑: Super+Alt+B (dwm config.h)
+# 模式: `bt-earbud fix [MAC]` = 无 TUI，只修复已连接耳机的音频档（开机自愈用）；默认 dmenu 菜单
+export DBUS_SESSION_BUS_ADDRESS="unix:path=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/bus"
+
+MODE="${1:-menu}"
+if [ "$MODE" = "fix" ]; then
+    FIX_MAC="${2:-}"
+    if [ -z "$FIX_MAC" ]; then
+        for _m in $(timeout 5 bluetoothctl devices Paired 2>/dev/null | awk '{print $2}'); do
+            timeout 3 bluetoothctl info "$_m" 2>/dev/null | grep -q 'Connected: yes' && { FIX_MAC="$_m"; break; }
+        done
+    fi
+    [ -z "$FIX_MAC" ] && exit 0   # 没连耳机，静默跳过
+fi
+
+# ---------------------------------------------------------------------------
+# 确保 PipeWire 里该耳机卡的高音质 profile 被激活并设为默认输出。
+# 坑1: profile 停在 off => sink 不存在，无声。直接切档可修。
+# 坑2: profile 停在 audio-gateway（电脑当音源/网关，sinks:0），且档位列表里
+#      根本没有 a2dp-sink* => A2DP transport 未协商（BlueZ 侧无 sep 端点），
+#      pactl set-card-profile 报 "No such entity"。切档无效，须升级修复：
+#      ① 重启 wireplumber 重新注册 Media1 端点
+#      ② 仍无 a2dp 档则 sudo 重启 bluetoothd + 重连 + 再重启 wireplumber
+#      （开机时耳机比 wireplumber 先连上就会踩坑2，靠本函数自愈）
+# 优先级：aptX(a2dp-sink) > AAC > SBC-XQ > SBC
+# 返回: 0 成功 / 1 卡未出现 / 2 修复失败
+PREF_PROFILES="a2dp-sink a2dp-sink-aac a2dp-sink-sbc_xq a2dp-sink-sbc"
+# 通话档（带麦，电话音质）：mSBC 优先于 CVSD
+CALL_PROFILES="headset-head-unit headset-head-unit-cvsd"
+
+# 把卡片切到指定档列表并设默认输入/输出。$1=档列表字符串；设 DEFAULT_IN 供通话麦
+set_mode() {
+    local profiles="$1" prof active_now sink_id src_id
+    for prof in $profiles; do
+        pactl set-card-profile "$card" "$prof" 2>/dev/null \
+            && [ "$(active_profile)" = "$prof" ] || continue
+        # 等对应 sink 出现并设为默认
+        local _i
+        for _i in 1 2 3 4 5 6; do
+            sink_id=$(pactl list short sinks 2>/dev/null | grep -i "$mac_u" | awk '{print $1}' | head -1)
+            [ -n "$sink_id" ] && break
+            sleep 1
+        done
+        [ -z "$sink_id" ] && return 1
+        pactl set-default-sink "$sink_id" 2>/dev/null || return 1
+        # 通话档同时设默认麦克风
+        src_id=$(pactl list short sources 2>/dev/null | grep -i "$mac_u" | awk '{print $1}' | head -1)
+        [ -n "$src_id" ] && pactl set-default-source "$src_id" 2>/dev/null
+        LAST_PROFILE="$prof"
+        return 0
+    done
+    return 1
+}
+
+# 注意：PipeWire 的 bluez 命名保留 MAC 原始大写，全部转小写比较
+card_sec() {  # 输出当前耳机卡Profiles区块（到 Properties: 为止）
+    pactl list cards 2>/dev/null | awk -v c="$(tr 'A-Z' 'a-z' <<<"name: bluez_card.${mac_u}")" '
+        {l=tolower($0)}
+        index(l,c) {f=1; print; next}
+        f && /properties:/ {exit}
+        f {print}'
+}
+
+a2dp_ready() { card_sec | grep -q 'a2dp-sink'; }
+
+active_profile() { card_sec | awk '/Active Profile/ {print $3; exit}'; }
+
+wait_a2dp() {  # 等 a2dp 档出现（最多 ~5s）
+    local _i
+    for _i in 1 2 3 4 5; do a2dp_ready && return 0; sleep 1; done
+    return 1
+}
+
+try_profiles() {  # 依优先级切档，成功输出档名
+    local prof
+    for prof in $PREF_PROFILES; do
+        pactl set-card-profile "$card" "$prof" 2>/dev/null \
+            && [ "$(active_profile)" = "$prof" ] && { echo "$prof"; return 0; }
+    done
+    return 1
+}
+
+restart_wireplumber() {
+    pkill -x wireplumber 2>/dev/null
+    sleep 1
+    (setsid wireplumber >/dev/null 2>&1 </dev/null &)
+    sleep 4
+}
+
+ensure_sink() {  # $1=模式: music(默认)|call
+    local card active mode="${1:-music}"
+    local profiles="$PREF_PROFILES"
+    [ "$mode" = "call" ] && profiles="$CALL_PROFILES"
+    mac_u=$(tr ':' '_' <<<"$mac")
+    # 等卡出现（最多 ~6s）
+    local _i
+    for _i in 1 2 3 4 5 6; do
+        pactl list cards short 2>/dev/null | grep -qi "bluez_card.${mac_u}" && break
+        sleep 1
+    done
+    pactl list cards short 2>/dev/null | grep -qi "bluez_card.${mac_u}" || return 1
+    card="bluez_card.${mac_u}"
+
+    active=$(active_profile)
+    # 通话模式且已在通话档 => 直接补设默认麦后返回
+    if [ "$mode" = "call" ] && [[ "$active" == headset-head-unit* ]]; then
+        local src
+        src=$(pactl list short sources 2>/dev/null | grep -i "$mac_u" | awk '{print $1}' | head -1)
+        [ -n "$src" ] && pactl set-default-source "$src"
+        LAST_PROFILE="$active"
+        return 0
+    fi
+    # 音乐模式且已在 a2dp 档 => 补设默认 sink 后返回
+    if [ "$mode" = "music" ] && [[ "$active" == a2dp-sink* ]]; then
+        local sid
+        sid=$(pactl list short sinks 2>/dev/null | grep -i "$mac_u" | awk '{print $1}' | head -1)
+        [ -n "$sid" ] && pactl set-default-sink "$sid"
+        LAST_PROFILE="$active"
+        return 0
+    fi
+
+    # 需要切档：先试直接切
+    if [ "$mode" = "call" ] || a2dp_ready; then
+        set_mode "$profiles" && return 0
+    fi
+    # 修复①：重启 wireplumber 重新注册 Media1 端点
+    restart_wireplumber
+    if [ "$mode" = "call" ] || wait_a2dp; then
+        set_mode "$profiles" && return 0
+    fi
+    # 修复②：重启 bluetoothd + 重连 + 再重启 wireplumber
+    sudo -n sv restart bluetoothd >/dev/null 2>&1 || return 2
+    timeout 15 bluetoothctl connect "$mac" >/dev/null 2>&1
+    for _i in 1 2 3 4 5 6 7 8; do
+        timeout 3 bluetoothctl info "$mac" 2>/dev/null \
+            | grep -q 'ServicesResolved: yes' && break
+        sleep 1
+    done
+    restart_wireplumber
+    [ "$mode" = "call" ] || wait_a2dp || return 2
+    set_mode "$profiles" || return 2
+    return 0
+}
+
+# fix 模式：不走 dmenu，直接对已连接耳机跑 ensure_sink（开机自愈）
+if [ "$MODE" = "fix" ]; then
+    mac="$FIX_MAC"
+    if ensure_sink; then
+        dunstify -a bt-earbud "开机蓝牙音频已修复 ✅ ($LAST_PROFILE)"
+    else
+        dunstify -a bt-earbud "蓝牙音频档修复失败 ❌ 手动: Super+Alt+B" -u critical
+    fi
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# 菜单模式
+DMENU=(dmenu -i -p "🎧 蓝牙设备:" -l 8 -w 420)
+
+# 已配对设备列表: "名称 (MAC) [状态🔋xx]|MAC|状态"
+# BlueZ 5.86 上 "devices Paired" 可能为空，用 Trusted + devices 兜底
+entries=()
+devs=$(timeout 5 bluetoothctl devices Trusted 2>/dev/null)
+[ -z "$devs" ] && devs=$(timeout 5 bluetoothctl devices 2>/dev/null)
+while read -r _ mac name; do
+    [ -z "$mac" ] && continue
+    info=$(timeout 5 bluetoothctl info "$mac" 2>/dev/null)
+    conn="未连接"
+    grep -q 'Connected: yes' <<<"$info" && conn="已连接"
+    batt=$(awk -F': ' '/Battery Percentage/{print " 🔋"$2}' <<<"$info")
+    entries+=("$name ($mac) [$conn$batt]|$mac|$conn")
+done <<<"$devs"
+
+# 额外菜单项
+entries+=("🛠 打开 bluetui (完整 TUI)|__bluetui__|-")
+entries+=("⏻ 蓝牙总开关 (rfkill)|__toggle__|-")
+
+[ ${#entries[@]} -eq 0 ] && { dunstify -a bt-earbud "没有已配对的蓝牙设备"; exit 1; }
+
+sel=$(printf '%s\n' "${entries[@]}" | cut -d'|' -f1 | "${DMENU[@]}") || exit 0
+# 按第一字段精确反查完整 entry
+entry=""
+for e in "${entries[@]}"; do
+    [ "${e%%|*}" = "$sel" ] && { entry="$e"; break; }
+done
+[ -z "$entry" ] && exit 1
+pick="$sel"
+mac=$(cut -d'|' -f2 <<<"$entry")
+conn=$(cut -d'|' -f3 <<<"$entry")
+
+case "$mac" in
+    __bluetui__)
+        "${TERMINAL:-st}" -e bluetui &
+        exit 0 ;;
+    __toggle__)
+        bt-toggle
+        exit 0 ;;
+esac
+
+if [ "$conn" = "已连接" ]; then
+    # 已连接：选「切音乐 / 切通话 / 断开」
+    MODESEL=$(printf '🎵 切到音乐档 (A2DP 高音质)\n📞 切到通话档 (带麦克风)\n🔌 断开连接\n' \
+        | dmenu -i -p "$pick" -l 3 -w 420) || exit 0
+    case "$MODESEL" in
+        🔌*)
+            timeout 10 bluetoothctl disconnect "$mac" >/dev/null 2>&1
+            dunstify -a bt-earbud "已断开: $pick"
+            ;;
+        📞*)
+            if ensure_sink call; then
+                dunstify -a bt-earbud "📞 已切到通话档 ($LAST_PROFILE) 麦已就绪"
+            else
+                dunstify -a bt-earbud "切通话档失败 ❌ 手动: pactl set-card-profile bluez_card.${mac_u} headset-head-unit" -u critical
+            fi
+            ;;
+        *)
+            if ensure_sink music; then
+                dunstify -a bt-earbud "🎵 已切到音乐档 ($LAST_PROFILE)"
+            else
+                dunstify -a bt-earbud "切音乐档失败 ❌ 再按一次 Super+Alt+B" -u critical
+            fi
+            ;;
+    esac
+else
+    # 未连接：先选用途再连
+    MODESEL=$(printf '🎵 听音乐 (A2DP 高音质)\n📞 打电话 (带麦克风)\n' \
+        | dmenu -i -p "$pick 用途:" -l 2 -w 420) || exit 0
+    MODE="music"; [[ "$MODESEL" == 📞* ]] && MODE="call"
+    # 先断开其他已连接的音频设备，避免抢声道
+    for m in $(timeout 5 bluetoothctl devices Paired 2>/dev/null | awk '{print $2}'); do
+        [ "$m" != "$mac" ] && timeout 5 bluetoothctl info "$m" 2>/dev/null | grep -q 'Connected: yes' \
+            && timeout 8 bluetoothctl disconnect "$m" >/dev/null 2>&1
+    done
+    if timeout 12 bluetoothctl connect "$mac" >/dev/null 2>&1; then
+        if ensure_sink "$MODE"; then
+            dunstify -a bt-earbud "已连接: $pick ✅ ($([ "$MODE" = call ] && echo 📞 || echo 🎵) $LAST_PROFILE)"
+        else
+            dunstify -a bt-earbud "已连接但音频档未就绪 ❌ 再按一次 Super+Alt+B 或运行 pactl set-card-profile" -u critical
+        fi
+    else
+        dunstify -a bt-earbud "连接失败: $pick ❌ 请确认耳机在配对/开机状态" -u critical
+    fi
+fi

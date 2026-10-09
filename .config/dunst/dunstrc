@@ -1,0 +1,33 @@
+[global]
+    font = "JetBrainsMono Nerd Font Mono 11"
+    width = (480, 640)
+    height = (0, 340)
+    shrink = true
+    max_icon_size = 300
+    notification_limit = 0
+    progress_bar = true
+    progress_bar_height = 16
+    progress_bar_min_width = 300
+    progress_bar_max_width = 500
+    horizontal_padding = 16
+    text_icon_padding = 14
+
+[urgency_low]
+    timeout = 4
+    background = "#222222"
+    foreground = "#bbbbbb"
+
+[urgency_normal]
+    timeout = 6
+    background = "#222222"
+    foreground = "#eeeeee"
+
+[urgency_critical]
+    timeout = 0
+    background = "#5c1a1a"
+    foreground = "#ffdede"
+
+# qrshare 专用：长超时（图标大小受 global max_icon_size 控制）
+[qrshare]
+    appname = "qrshare"
+    timeout = 30000

@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# qrshare: 把剪贴板内容（或参数传入的文本）生成二维码，通知里显示，手机扫码
+text="${1:-$(xclip -selection clipboard -o 2>/dev/null)}"
+[ -z "$text" ] && { dunstify -a qrshare -u critical "剪贴板是空的"; exit 1; }
+png="$HOME/.cache/qrshare.png"
+mkdir -p "$HOME/.cache"
+qrencode -o "$png" -s 14 -m 4 "$text" || { dunstify -a qrshare -u critical "生成失败（内容过长？）"; exit 1; }
+preview="${text:0:60}"
+dunstify -a qrshare -u normal -i "$png" -t 30000 "扫码: $preview"

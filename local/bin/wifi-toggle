@@ -1,0 +1,13 @@
+#!/bin/bash
+# wifi-toggle: WiFi rfkill 秒开/秒关
+export DBUS_SESSION_BUS_ADDRESS="unix:path=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/bus"
+# rfkill 需要权限: sudoers 已配 NOPASSWD 则直接可用, 否则 pkexec
+RFKILL="sudo -n rfkill"
+$RFKILL list wlan >/dev/null 2>&1 || RFKILL="pkexec rfkill"
+# parse the "Soft blocked:" / "Hard blocked:" status lines under the wlan device
+blocked=$($RFKILL list wlan 2>/dev/null | awk '/[bB]locked: yes/{found=1} END{print found+0}')
+if [ "$blocked" = "1" ]; then
+    $RFKILL unblock wlan && dunstify -a wifi-toggle -u low "📶 WiFi 已开"
+else
+    $RFKILL block wlan && dunstify -a wifi-toggle -u low "✈️ WiFi 已关"
+fi

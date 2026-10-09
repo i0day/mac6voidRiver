@@ -1,0 +1,5 @@
+patch:
+  schema_list:
+    - schema: wanxiang      # 万象拼音
+    - schema: rime_ice      # 雾凇拼音（全拼）
+    - schema: luna_pinyin   # 朙月拼音（中州韵官方）

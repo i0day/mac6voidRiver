@@ -1,0 +1,134 @@
+# sxhkd 配置 — 替代 xbindkeys（grab 更稳；改后即时生效: pkill -USR1 -x sxhkd）
+# 语法: keysym 前加 @ = 松开时触发（防按住 auto-repeat 连发）
+#       keysym 前加 ~ = 事件同时转发给其他客户端
+
+# 输入法切换已交给 fcitx5 自身热键系统 (~/.config/fcitx5/config):
+#   Ctrl+Space 开关 / Ctrl+Super+Space 循环
+# 不在 sxhkd 绑定，避免 X grab 冲突。
+
+# ===== 键盘流便利键 =====
+# 剪贴板历史选择器
+@alt+ctrl+c
+	clipmenu
+
+# 勿扰模式开关（暂停/恢复所有 dunst 通知）
+@alt+ctrl+s
+	dunst-quiet
+
+# 清空当前所有通知
+@alt+ctrl+z
+	dunst-clear
+
+# 选中文字 -> Google 搜索
+@alt+ctrl+g
+	gsearch
+
+# 剪贴板 URL -> 浏览器直开
+@alt+ctrl+o
+	openurl
+
+# 剪贴板内容"打字"进输入框
+@alt+ctrl+y
+	paste-type
+
+# WiFi 秒开/秒关
+@alt+ctrl+f
+	wifi-toggle
+
+# Vaultwarden 备份拉取（eject 键）
+@XF86Eject
+	vw-backup-pull-notify
+
+# ===== 应用启动 (自 Mint xbindkeys 全量迁移, 2026-10) =====
+# Brave 浏览器
+@alt+ctrl+b
+	brave-browser
+
+# Thunar 文件管理器
+@alt+ctrl+l
+	Thunar
+
+# Transmission 下载
+@alt+ctrl+t
+	transmission-gtk
+
+# 蓝牙管理
+@alt+ctrl+n
+	blueman-manager
+
+# 蓝牙耳机 dmenu 切换已移入 dwm 键位 (Super+Alt+B)：sxhkd 抢不到该组合
+# （X 层已被占用，见 bt-earbud 脚本头注释）
+
+# 音量面板
+@alt+ctrl+p
+	pavucontrol
+
+# 进程杀手机 (dmenu 选内存最大进程 kill)
+@alt+ctrl+k
+	term
+
+# cliptask: 剪贴板智能菜单 (URL下载/mpv播放/存图/magnet)
+@alt+ctrl+a
+	cliptask
+
+# 剪贴板 magnet/链接 -> transmission-daemon
+@alt+ctrl+d
+	bt
+
+# ===== 系统监视 =====
+# btop（st 终端内）
+@super+shift+b
+	st -e btop
+
+# htop（st 终端内）
+@super+shift+h
+	st -e htop
+
+
+# ===== 语音朗读 =====
+# 朗读选中文字（真人神经语音 edge-tts，中英文自动切换）
+@alt+ctrl+e
+	~/.local/bin/saysel
+
+# 停止朗读
+@alt+ctrl+shift+e
+	pkill -f sd-edge-tts
+
+# 阅读模式（等效 Firefox 内置 Ctrl+Alt+R，本构建失效故用 about:reader 替代）
+# Ctrl+Alt+r 已随朗读键迁走（-> Ctrl+Alt+e），这里直接占用原生键位
+# [临时注释 2026-10-04: 用户测试 Firefox 原生 Ctrl+Alt+R；恢复=取消注释后 pkill -USR1 sxhkd]
+#@alt+ctrl+r
+#	~/.local/bin/reader
+@alt+ctrl+shift+r
+	~/.local/bin/reader
+
+# 语音输入: 按下后录 6 秒，whisper.cpp 本地识别，粘贴到光标
+@super+ctrl+v
+	voice-ctl 6
+
+# ===== 无头音乐 (MPD) =====
+# 播放/暂停
+@super+ctrl+m
+	mpc -q toggle
+
+# 打开 ncmpcpp 播放器（含频谱可视化）
+@super+ctrl+comma
+	/usr/local/bin/st -e ncmpcpp
+
+# 上一首 / 下一首 / 静音
+@super+ctrl+period
+	mpc -q next
+@super+ctrl+slash
+	mpc -q prev
+@super+ctrl+semicolon
+	mpc -q mute
+
+# ===== 番茄钟专注模式 =====
+# 开 25 分钟专注（自动静音通知+暂停音乐，到时提醒恢复）
+@super+ctrl+f
+	focus
+
+# ===== 一键传文件到手机 =====
+# fzf 选文件 -> 局域网直传服务 + 屏幕二维码，手机扫码即下
+@super+ctrl+shift+f
+	st -e sendfile

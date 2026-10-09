@@ -1,0 +1,14 @@
+#!/bin/bash
+
+# Get the link from the clipboard
+LINK=$(xclip -o)
+
+# Start the Transmission daemon if it's not already running
+if ! pgrep transmission-da; then
+    transmission-daemon
+fi
+# Add the link to Transmission and get its ID
+transmission-remote -a "$LINK"
+
+# if the download is complete, fire the notification
+  dunstify 'Transmission' 'Download Started!'

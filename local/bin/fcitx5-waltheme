@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# fcitx5-waltheme: generate fcitx5 classicui theme from pywal colors.
+# Run after wal changes palette so candidate window matches.
+set -e
+WAL_COLORS="$HOME/.cache/wal/colors"
+[ -f "$WAL_COLORS" ] || { echo "no wal colors at $WAL_COLORS"; exit 1; }
+
+mapfile -t C < "$WAL_COLORS"
+BG="#101418"          # background: 与 dwm bar 未选区同色
+FG="#ffffff"          # normal text: 纯白
+HI="#000000"          # highlighted text: 黑字 (配深钢蓝底, 与 dwm 选中 tag 一致)
+SEL="#7d97ad"         # selection/highlight background: 深钢蓝 (同 dwm selbg)
+BORDER="#2c3140"      # border: 深灰蓝，可见但不刺眼
+
+THEME_DIR="$HOME/.local/share/fcitx5/themes/wal"
+mkdir -p "$THEME_DIR"
+
+cat > "$THEME_DIR/theme.conf" <<EOF
+[Metadata]
+Name=wal
+Version=1
+Author=fcitx5-waltheme
+Description=Generated from pywal palette
+ScaleWithDPI=True
+
+[InputPanel]
+NormalColor=$FG
+HighlightCandidateColor=$HI
+HighlightColor=$HI
+HighlightBackgroundColor=$SEL
+PageButtonAlignment=Last Candidate
+
+[InputPanel/TextMargin]
+Left=5
+Right=5
+Top=4
+Bottom=4
+
+[InputPanel/ContentMargin]
+Left=2
+Right=2
+Top=2
+Bottom=2
+
+[InputPanel/Background]
+Color=$BG
+BorderColor=$BORDER
+BorderWidth=1
+
+[InputPanel/Background/Margin]
+Left=2
+Right=2
+Top=2
+Bottom=2
+
+[InputPanel/Highlight]
+Color=$SEL
+
+[InputPanel/Highlight/Margin]
+Left=5
+Right=5
+Top=4
+Bottom=4
+
+[Menu]
+NormalColor=$FG
+HighlightCandidateColor=$HI
+
+[Menu/Background]
+Color=$BG
+BorderColor=$BORDER
+BorderWidth=1
+
+[Menu/Background/Margin]
+Left=2
+Right=2
+Top=2
+Bottom=2
+
+[Menu/ContentMargin]
+Left=2
+Right=2
+Top=2
+Bottom=2
+
+[Menu/Highlight]
+Color=$SEL
+
+[Menu/Highlight/Margin]
+Left=5
+Right=5
+Top=4
+Bottom=4
+
+[Menu/Separator]
+Color=$BORDER
+
+[Menu/TextMargin]
+Left=5
+Right=5
+Top=4
+Bottom=4
+EOF
+
+CONF="$HOME/.config/fcitx5/conf/classicui.conf"
+if [ -f "$CONF" ] && grep -q '^Theme=' "$CONF"; then
+  sed -i 's/^Theme=.*/Theme=wal/' "$CONF"
+else
+  mkdir -p "$(dirname "$CONF")"
+  # NOTE: keys must be top-level, no [General] section header
+  printf 'Theme=wal\nUseDarkTheme=False\nFont="JetBrainsMono Nerd Font Mono 11"\n' > "$CONF"
+fi
+echo "wal fcitx5 theme written to $THEME_DIR"

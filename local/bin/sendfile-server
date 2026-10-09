@@ -1,0 +1,51 @@
+#!/usr/bin/env python3
+# sendfile-server — 带 token 校验的局域网单文件下载服务
+# 用法: sendfile-server PORT TOKEN FILENAME   (cwd = 文件所在目录)
+import http.server, sys, socketserver, os, mimetypes, urllib.parse
+
+port = int(sys.argv[1])
+token = sys.argv[2]
+fname = sys.argv[3]
+expected = "/" + token + "/" + urllib.parse.quote(fname)
+
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        # 归一化比较（curl/浏览器发的 path 可能带百分号编码）
+        if self.path != expected:
+            self.send_error(404)
+            return
+        fpath = os.path.join(os.getcwd(), fname)
+        if not os.path.isfile(fpath):
+            self.send_error(404)
+            return
+        ctype = mimetypes.guess_type(fname)[0] or "application/octet-stream"
+        size = os.path.getsize(fpath)
+        # RFC 5987: header 只能 latin-1，非 ASCII 文件名走 filename*=
+        disp_name = fname.encode("ascii", "ignore").decode() or "download.bin"
+        quoted = urllib.parse.quote(fname)
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(size))
+        self.send_header("Content-Disposition",
+                        'inline; filename="%s"; filename*=UTF-8\'\'%s'
+                        % (disp_name.replace('"', ""), quoted))
+        self.end_headers()
+        with open(fpath, "rb") as f:
+            while True:
+                chunk = f.read(65536)
+                if not chunk:
+                    break
+                try:
+                    self.wfile.write(chunk)
+                except (BrokenPipeError, ConnectionResetError):
+                    break
+
+    def log_message(self, *a):
+        pass
+
+class Server(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+with Server(("0.0.0.0", port), H) as s:
+    s.serve_forever()

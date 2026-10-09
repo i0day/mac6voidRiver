@@ -1,0 +1,27 @@
+#!/bin/bash
+# Mac 触摸板开关 (bcm5974 multitouch 驱动, synclient 不适用)
+# 用法: touchpad-toggle [on|off|toggle]
+# 注意: 触摸板数据走独立的 "bcm5974" 指针设备(id 随热插拔变化, 按名字查)。
+# "Apple ... Keyboard / Trackpad" 那个设备是键盘部分, 没有 Tapping 属性, 别用错。
+# 强制走 systemd 用户总线：dwm 继承的旧 /tmp/dbus-* 地址已死，dunstify 会静默失败
+export DBUS_SESSION_BUS_ADDRESS="unix:path=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/bus"
+
+id=$(xinput list --id-only "bcm5974" 2>/dev/null)
+[ -z "$id" ] && { dunstify "Touchpad" "未找到触摸板 (bcm5974)"; exit 1; }
+
+get_tap() { xinput list-props "$id" 2>/dev/null | awk -F':\t' '/Tapping Enabled \(/ && !/Default/ {print $2}'; }
+
+case "${1:-toggle}" in
+  off)
+    xinput set-prop "$id" "libinput Tapping Enabled" 0
+    dunstify -r 777 "触摸板轻点已关闭（仅物理按压可点击）"
+    ;;
+  on)
+    xinput set-prop "$id" "libinput Tapping Enabled" 1
+    xinput set-prop "$id" --type=int --format=8 "libinput Click Method Enabled" 1 0  # clickfinger: 1指=左 2指=右
+    dunstify -r 777 "触摸板轻点已开启 (tap to click)"
+    ;;
+  *)
+    if [ "$(get_tap)" = "1" ]; then "$0" off; else "$0" on; fi
+    ;;
+esac

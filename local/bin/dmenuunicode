@@ -1,0 +1,16 @@
+#!/bin/bash
+# Unicode 字符选择器 (Super+`)
+grep -v '^#' /usr/share/misc/unicode.map 2>/dev/null | head -0
+# 常用符号表
+cat <<'EOF' | dmenu -i -l 20 -p "unicode:" | head -1 | cut -d' ' -f1 | tr -d '\n' | xclip -selection clipboard
+✓ 对号 ✔ 勾 ✗ 错 ✘ 叉
+• 圆点 ○ 空心圆 ● 实心圆 ◐ 半圆
+→ 右箭头 ← 左箭头 ↑ 上箭头 ↓ 下箭头
+★ 星 ☆ 空心星 ♥ 红心 ♦ 方块
+① ② ③ ④ ⑤ ⑥ ⑦ ⑧ ⑨
+α β γ δ ε λ μ π σ ω
+± × ÷ ≈ ≠ ≤ ≥ ∞ √
+€ £ ¥ ₽ ° ℃ ℉ § ¶
+■ □ ▲ △ ▼ ▼ ◆ ◇ ☐ ☑
+EOF
+[ $? -eq 0 ] && dunstify "已复制到剪贴板"

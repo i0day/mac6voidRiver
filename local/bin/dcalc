@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# dcalc: rofi 计算器。输入算式 -> bc 计算 -> 结果进剪贴板 + 通知
+expr=$(rofi -dmenu -p "🧮 calc:" -mesg "例: (2+3)*4/7  支持 bc 语法") || exit 0
+[ -z "$expr" ] && exit 0
+result=$(echo "scale=6; $expr" | bc -l 2>/dev/null)
+if [ -z "$result" ]; then
+    dunstify -a dcalc -u critical "算式无效: $expr"
+    exit 1
+fi
+# 去掉多余的尾零
+result=$(echo "$result" | sed 's/\.[0-9]*0$//; s/\.$//')
+printf '%s' "$result" | xclip -selection clipboard
+dunstify -a dcalc -u low "＝ $result（已复制）"

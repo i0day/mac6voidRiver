@@ -1,0 +1,12 @@
+#!/bin/bash
+# eject 键触发：拉取 Vaultwarden 备份并弹 OSD 通知
+export DBUS_SESSION_BUS_ADDRESS="unix:path=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/bus"
+
+dunstify -a "vw-backup" -u low -r 9995 -t 2000 "Backup 备份拉取中…"
+
+if out=$(~/.local/bin/vw-backup-pull 2>&1); then
+    count=$(echo "$out" | grep -o 'count=[0-9]*' | tail -1)
+    dunstify -a "vw-backup" -u normal -r 9995 -t 5000 "Backup 备份完成 ✓ ${count}"
+else
+    dunstify -a "vw-backup" -u critical -r 9995 -t 0 "Backup 备份失败 ✗ $(echo "$out" | tail -1)"
+fi

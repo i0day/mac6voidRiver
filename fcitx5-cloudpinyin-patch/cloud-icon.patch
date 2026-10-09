@@ -1,0 +1,13 @@
+diff --git a/modules/cloudpinyin/cloudpinyin_public.h b/modules/cloudpinyin/cloudpinyin_public.h
+index 8942f25..e0e74a2 100644
+--- a/modules/cloudpinyin/cloudpinyin_public.h
++++ b/modules/cloudpinyin/cloudpinyin_public.h
+@@ -77,7 +77,7 @@ private:
+     static constexpr long int LOADING_TIME_QUICK_THRESHOLD = 1000;
+ 
+     void fill(const std::string &hanzi) {
+-        setText(fcitx::Text(hanzi));
++        setText(fcitx::Text("\xe2\x98\x81 " + hanzi));
+         word_ = hanzi;
+         filled_ = true;
+         if (!constructor_) {

@@ -1,0 +1,14 @@
+#!/bin/bash
+# 电源菜单 (dwm Super+P / Super+BackSpace / Super+Shift+Q)
+# 主题: oldmacmint .config/rofi/power.rasi（colors.rasi 自带配色，无需 wal 覆盖）
+# 本机适配: Void+runit+elogind 无 systemctl，reboot/poweroff 走 sudo -n (NOPASSWD)
+export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/bus}"
+
+choice=$(printf "锁定\n挂起\n重启\n关机\n注销" | rofi -dmenu -config ~/.config/rofi/power.rasi -p "电源")
+case "$choice" in
+  锁定) slock ;;
+  挂起) slock & sleep 1; sudo -n zzz || zzz ;;
+  重启) sudo -n /usr/sbin/reboot ;;
+  关机) sudo -n /usr/sbin/poweroff ;;
+  注销) pkill dwm ;;
+esac

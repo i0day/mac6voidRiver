@@ -1,0 +1,62 @@
+#!/bin/bash
+
+# Variables
+isActive=0  # 0: disabled, 1: enabled
+#icon_enabled=""
+#icon_disabled="﯈"
+notify_id=6969
+status_file="$HOME/.cache/caffeine_status"
+
+# Ensure status file exists
+if [[ -f "$status_file" ]]; then
+  isActive=$(<"$status_file")
+else
+  echo 0 > "$status_file"
+fi
+
+function enable_caffeine {
+  if [[ $isActive -eq 0 ]]; then
+    xset s off -dpms
+    xautolock -disable
+    dunstify -r $notify_id "Caffeine Enabled"
+    echo 1 > "$status_file"
+    isActive=1
+  fi
+}
+
+#function disable_caffeine {
+#  if [[ $isActive -eq 1 ]]; then
+#    xautolock -enable  # Ensure xautolock is re-enabled
+#    xset s on +dpms
+#    dunstify -r $notify_id "Caffeine Disabled"
+#    echo 0 > "$status_file"
+#    isActive=0
+#  fi
+#}
+function disable_caffeine {
+  if [[ $isActive -eq 1 ]]; then
+    if ! pgrep xautolock >/dev/null; then
+      xautolock -time 2 -locker slock -nowlocker slock -detectsleep -corners 000+ -cornerdelay 10 &
+    fi
+    xautolock -enable
+    xset s on +dpms
+    dunstify -r $notify_id "Caffeine Disabled"
+    echo 0 > "$status_file"
+    isActive=0
+  fi
+}
+
+# Main
+case "$1" in
+  enable)
+    enable_caffeine
+    ;;
+  disable)
+    disable_caffeine
+    ;;
+  *)
+    echo "Usage: $0 {enable|disable}"
+    exit 1
+    ;;
+esac
+

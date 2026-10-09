@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# redshift-toggle: 一键开关夜间色温（现用 sctd，保留脚本名以兼容 dwm Super+Ctrl+r 绑定）
+# 注: 本机是 Void/runit，无 systemd --user，旧 systemctl 版本永远失败，已废弃
+# 图标用 JetBrainsMono Nerd Font 的 fa 符号: 太阳 \uf185 / 月亮 \uf186
+export DBUS_SESSION_BUS_ADDRESS="unix:path=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/bus"
+LAT=40.7128
+LON=-74.0060
+
+ICON_DAY=$'\uf185'    # 太阳 = 白天模式
+ICON_NIGHT=$'\uf186'  # 月亮 = 夜间模式
+
+if pgrep -x sctd >/dev/null; then
+    pkill -x sctd
+    sct 6500 2>/dev/null || sctd --reset 2>/dev/null
+    dunstify -a redshift-toggle -u low "${ICON_DAY} 白天模式 (Day mode)"
+else
+    sctd --latitude "$LAT" --longitude "$LON" >/dev/null 2>&1 &
+    dunstify -a redshift-toggle -u low "${ICON_NIGHT} 夜间模式 (Night mode)"
+fi

@@ -1,0 +1,5 @@
+#!/bin/sh
+# shim: 强制走 systemd 用户总线后再调真 dunstify
+# 原因: dwm 会话可能继承死掉的 /tmp/dbus-* 地址，dunstify 会静默失败
+export DBUS_SESSION_BUS_ADDRESS="unix:path=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/bus"
+exec /usr/bin/dunstify "$@"

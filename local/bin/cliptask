@@ -1,0 +1,39 @@
+#!/bin/sh
+
+menu(){
+    printf "1. [URL] Download file in ~/Downloads\n"
+    printf "2. [URL] Play videos or audio in mpv\n"
+    printf "3. [Image] Save clipboard image in ~/Pictures\n"
+    printf "4. [Magnet] downloading torrent from magnet\n"
+}
+
+spell_failed(){
+    notify-send "Failed to cast spell"
+}
+
+choice=$(menu | dmenu -p "Clipboard Magic 📋:" -i -l 20 | cut -d. -f1)
+cbtext=$(xclip -o -selection clipboard)
+
+
+case $choice in
+    1)
+	aria2c -d ~/Downloads $cbtext &&
+	    notify-send "Downloading File" ||
+		spell_failed
+	break
+	;;
+    2)
+	mpv "$cbtext" || spell_failed
+	break
+	;;
+    3)
+	file=$(date +"%Y_%m_%d_%I_%M_%p")
+	xclip -selection clipboard -t image/png -o > $HOME/Pictures/$file.png ||
+	    spell_failed
+	break
+	;;
+    4)
+	~/bt
+        break
+	;;
+esac

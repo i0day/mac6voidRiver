@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# sleeptimer: rofi 输入分钟数，到点 dunst 响铃提醒。再跑一次可选取消。
+state="$HOME/.cache/sleeptimer.pid"
+mkdir -p "$HOME/.cache"
+
+if [ -f "$state" ] && kill -0 "$(cat "$state")" 2>/dev/null; then
+    choice=$(printf "取消计时\n不管它" | rofi -dmenu -p "⏲ 计时器运行中:")
+    [ "$choice" = "取消计时" ] && { kill "$(cat "$state")" 2>/dev/null; rm -f "$state"; dunstify -a sleeptimer "计时已取消"; }
+    exit 0
+fi
+
+mins=$(rofi -dmenu -p "⏲ 多少分钟后提醒?" <<<"10
+15
+20
+25
+30
+45
+60") || exit 0
+[ -z "$mins" ] && exit 0
+
+(
+    echo $$ > "$state"
+    sleep "$((mins * 60))"
+    for i in 1 2 3; do
+        dunstify -a sleeptimer -u critical -t 0 "⏰ ${mins} 分钟到了！"
+        sleep 3
+    done
+    rm -f "$state"
+) &
+disown
+dunstify -a sleeptimer -u low "⏲ ${mins} 分钟后提醒你（再跑一次本命令可取消）"

@@ -1,0 +1,46 @@
+#!/bin/sh
+# focus — 番茄钟：静音通知 + 暂停音乐，到时提醒并恢复
+# 用法: focus [分钟数]   默认 25
+# 再按一次（已暂停时）= 取消专注，立即恢复
+MINS=${1:-25}
+STATE=/tmp/focus.was-playing
+TIMER_PID=/tmp/focus.timer.pid
+
+# 已在专注中（有计时器且仍存活）-> 取消
+if [ -f "$TIMER_PID" ] && kill -0 "$(cat $TIMER_PID)" 2>/dev/null; then
+    OLD=$(cat "$TIMER_PID")
+    # 杀掉计时器子进程
+    pkill -P "$OLD" 2>/dev/null
+    kill "$OLD" 2>/dev/null
+    # 恢复音乐
+    [ "$(cat $STATE 2>/dev/null)" = "1" ] && mpc -q play
+    dunstctl set-paused false 2>/dev/null
+    rm -f "$TIMER_PID"
+    notify-send -t 2500 "🛑 专注已取消" "通知与音乐已恢复"
+    exit 0
+fi
+
+# 记录并暂停音乐
+if mpc -q status 2>/dev/null | grep -q playing; then
+    echo 1 > "$STATE"; mpc -q pause
+else
+    echo 0 > "$STATE"
+fi
+
+# 关键: transient:1 让这条通知穿透 paused 状态, 先显示再静音
+notify-send -h int:transient:1 -t 3000 "🍅 专注开始" "专注 $MINS 分钟，勿扰已开启；再按同键可取消"
+
+# 暂停所有通知
+dunstctl set-paused true 2>/dev/null
+
+(
+    sleep $((MINS * 60))
+    [ "$(cat $STATE 2>/dev/null)" = "1" ] && mpc -q play
+    dunstctl set-paused false 2>/dev/null
+    [ -f /tmp/focus-ding.wav ] || ffmpeg -y -loglevel error -f lavfi -i "sine=frequency=880:duration=0.4" -af "afade=t=out:st=0.2:d=0.2" /tmp/focus-ding.wav 2>/dev/null
+    command -v paplay >/dev/null 2>&1 && paplay /tmp/focus-ding.wav || aplay -q /tmp/focus-ding.wav 2>/dev/null
+    notify-send -u critical "🍅 专注结束！" "$MINS 分钟到，该休息了"
+    rm -f "$TIMER_PID"
+) &
+echo $! > "$TIMER_PID"
+echo "focus timer running: ${MINS}min (pid $!)"

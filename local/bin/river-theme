@@ -1,0 +1,35 @@
+#!/bin/bash
+# river-theme — 一次性：壁纸 → wal 取色 → river 全套主题（无轮播守护）
+# 用法: river-theme [壁纸路径]      不带参数 = 沿用 ~/.cache/wal/wal 记录的当前壁纸
+#   river-theme ~/Pictures/foo.jpg  = 换壁纸并全局重新配色
+set -u
+
+IMG="${1:-$(cat "$HOME/.cache/wal/wal" 2>/dev/null)}"
+if [ -z "${IMG:-}" ] || [ ! -f "$IMG" ]; then
+    echo "找不到壁纸：'${IMG:-<空>}'。传一个图片路径，或先跑过 wal -i。" >&2
+    exit 1
+fi
+
+# 1) 取色 + 生成全套主题（foot/mako/waybar/rofi/vim 等 import 的 cache 产物）
+#    -n: 不把 color sequences 打到当前终端（避免把跑脚本的 tty 染色）
+#    -e 只刷新文件，不触发外部程序
+wal -q -n -i "$IMG" || { echo "wal 取色失败" >&2; exit 1; }
+
+# 2) 把配色推给运行中的 river 边框（focused=color4, urgent=color6，同 F5 逻辑）
+c4=$(grep color4 ~/.cache/wal/colors.yml | head -1 | grep -oE '#[0-9a-fA-F]{6}' | tr -d '#')
+c6=$(grep color6 ~/.cache/wal/colors.yml | head -1 | grep -oE '#[0-9a-fA-F]{6}' | tr -d '#')
+if [ -n "${WAYLAND_DISPLAY:-}" ]; then
+    [ -n "$c4" ] && riverctl border-color-focused "0x$c4" 2>/dev/null
+    [ -n "$c6" ] && riverctl border-color-urgent "0x$c6" 2>/dev/null
+    # 3) 壁纸：杀掉旧 swaybg，用新图起一个（disown 防脚本退出带走它）
+    pkill -x swaybg 2>/dev/null
+    swaybg -i "$IMG" >/dev/null 2>&1 & disown
+    # 4) 通知栏 / 状态栏跟随新配色
+    makoctl reload 2>/dev/null
+    pkill -USR2 -x waybar 2>/dev/null
+    notify-send -t 2000 "river-theme" "已应用: $(basename "$IMG")  (配色 $(echo "#$c4" | tr 'a-f' 'A-F'))"
+else
+    # 不在 river 会话里：主题已生成到 ~/.cache/wal，river init 启动时会自动
+    # 读 ~/.cache/wal/wal 起 swaybg 并读到新配色，无需额外动作
+    echo "非 river 会话：主题已生成（swaybg/边框将在下次 river 启动时生效）"
+fi

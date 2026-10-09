@@ -1,0 +1,10 @@
+#!/bin/bash
+# 区域截图 (Shift+Print)
+cd ~/Pictures
+case $(printf "全屏\n选区\n窗口" | dmenu -i -p "截图:") in
+  全屏) maim "full-$(date +%y%m%d-%H%M%S).png" ;;
+  选区) maim -s "sel-$(date +%y%m%d-%H%M%S).png" ;;
+  窗口) maim -i "$(xdotool getactivewindow)" "win-$(date +%y%m%d-%H%M%S).png" ;;
+  *) exit 1 ;;
+esac
+dunstify "截图已保存到 ~/Pictures"

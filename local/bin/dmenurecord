@@ -1,0 +1,21 @@
+#!/bin/bash
+# 录屏 (Super+Print 开始 / Super+Shift+Print 或 Super+Del 停止)
+marker="recmarker-dmenurecord"
+if [ "$1" = "kill" ]; then
+  if pkill -f "$marker"; then dunstify "录屏已停止"; else dunstify "当前没有在录屏"; fi
+  exit 0
+fi
+if pgrep -f "$marker" >/dev/null; then
+  dunstify "已经在录屏（Super+Shift+Print 停止）"
+  exit 1
+fi
+out="$HOME/Videos/rec-$(date +%y%m%d-%H%M%S).mkv"
+mkdir -p "$HOME/Videos"
+read -r w h < <(xrandr | grep -m1 '[0-9]*x[0-9]*' | awk -F'[ x+]' '{print $1, $2}')
+bash -c "exec -a $marker ffmpeg -y -f x11grab -framerate 30 -video_size ${w}x${h} -i :0.0 -c:v libx264 -preset ultrafast -crf 23 '$out'" >/dev/null 2>&1 &
+sleep 1
+if pgrep -f "$marker" >/dev/null; then
+  dunstify "开始录屏 → $out"
+else
+  dunstify -u critical "录屏启动失败"
+fi

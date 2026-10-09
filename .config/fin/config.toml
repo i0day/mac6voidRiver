@@ -1,0 +1,84 @@
+current_server = "v2.nypnk.com"
+renderer = "mpv"
+eq_enabled = false
+bass = 0
+treble = 0
+bass_cutoff = 0
+treble_cutoff = 0
+
+[[servers]]
+name = "v2.nypnk.com"
+url = "https://v2.nypnk.com"
+user_id = "cde91cebfb294e41ab2063b47cd4c61e"
+user_name = "james"
+access_token = "5a43eba3699b43079552ec921fab4e95"
+device_id = "dd19c3be-bc79-407a-8304-3c04fe112a14"
+server_kind = "jellyfin"
+
+[client]
+name = "fin"
+version = "0.6.0"
+
+[replaygain]
+mode = "off"
+preamp_db = 0.0
+prevent_clip = true
+
+[crossfade]
+mode = "off"
+duration_secs = 5.0
+
+[[eq_band_settings]]
+cutoff = 32
+q = 70
+gain = 0
+
+[[eq_band_settings]]
+cutoff = 63
+q = 70
+gain = 0
+
+[[eq_band_settings]]
+cutoff = 125
+q = 70
+gain = 0
+
+[[eq_band_settings]]
+cutoff = 250
+q = 70
+gain = 0
+
+[[eq_band_settings]]
+cutoff = 500
+q = 70
+gain = 0
+
+[[eq_band_settings]]
+cutoff = 1000
+q = 70
+gain = 0
+
+[[eq_band_settings]]
+cutoff = 2000
+q = 70
+gain = 0
+
+[[eq_band_settings]]
+cutoff = 4000
+q = 70
+gain = 0
+
+[[eq_band_settings]]
+cutoff = 8000
+q = 70
+gain = 0
+
+[[eq_band_settings]]
+cutoff = 16000
+q = 70
+gain = 0
+
+[media_renderer]
+enabled = true
+port = 0
+uuid = "fe08995f-a0d1-4bd7-b425-09d43ba48687"

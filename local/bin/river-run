@@ -1,0 +1,25 @@
+#!/bin/bash
+# river-run — 在 tty 里手动启动 river 会话（不碰 dwm 自动链）
+# 复刻 .xinitrc 的必要环境：session bus + 输入法 + keyring
+export PATH="$HOME/.local/bin:$PATH"
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+[ -S "$XDG_RUNTIME_DIR/bus" ] || dbus-daemon --session --address="unix:path=$XDG_RUNTIME_DIR/bus" --fork --print-address >/dev/null
+export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+export GTK_IM_MODULE=fcitx5
+export QT_IM_MODULE=fcitx5
+export XMODIFIERS=@im=fcitx
+export MOZ_ENABLE_WAYLAND=1
+export QT_QPA_PLATFORM=wayland
+# 输入法复用 fcitx5：若现存实例是从 X 会话起的（环境无 WAYLAND_DISPLAY），
+# 它不会注册 Wayland input-method——杀掉，让 river init 以正确环境重起。
+for p in $(pgrep -x fcitx5); do
+    tr '\0' '\n' < /proc/$p/environ 2>/dev/null | grep -q '^WAYLAND_DISPLAY=' || kill "$p" 2>/dev/null
+done
+# 音频（若 X 会话已在跑则跳过，pipewire 单例安全）
+pgrep -x pipewire >/dev/null || { pipewire & pipewire-pulse & wireplumber & sleep 1; }
+sleep 1
+# gnome-keyring（Bitwarden secrets）
+mkdir -p "$XDG_RUNTIME_DIR/keyring"
+eval "$(gnome-keyring-daemon --start --components=secrets 2>/dev/null)"
+export SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-$XDG_RUNTIME_DIR/keyring/ssh}"
+exec river "$@"

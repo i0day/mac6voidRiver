@@ -1,0 +1,7 @@
+#!/bin/bash
+# openurl: 剪贴板里的 URL 直接用浏览器打开
+url=$(xclip -o -selection clipboard 2>/dev/null | head -1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+case "$url" in
+  http://*|https://*) ff-open "$url" ;;
+  *) dunstify -a openurl -u low "剪贴板里不是 URL: ${url:0:40}" ;;
+esac

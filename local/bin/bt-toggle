@@ -1,0 +1,12 @@
+#!/bin/bash
+# bt-toggle: 蓝牙 rfkill 秒开/秒关
+export DBUS_SESSION_BUS_ADDRESS="unix:path=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/bus"
+RFKILL="sudo -n rfkill"
+$RFKILL list bluetooth >/dev/null 2>&1 || RFKILL="pkexec rfkill"
+# 注意: rfkill 输出设备行是 "hci0: Bluetooth"（大写），必须解析 "Soft blocked:" 行本身
+state=$($RFKILL list bluetooth 2>/dev/null | awk -F': ' '/^[[:space:]]*Soft blocked/{print $2; exit}')
+if [ "$state" = "yes" ]; then
+    $RFKILL unblock bluetooth && dunstify -a bt-toggle -u low "🅱️ 蓝牙已开"
+else
+    $RFKILL block bluetooth && dunstify -a bt-toggle -u low "蓝牙已关"
+fi

@@ -1,0 +1,18 @@
+#!/bin/bash
+# U盘挂载菜单 (dwm Super+F9) — udisks2
+devs=$(lsblk -rm -o NAME,SIZE,LABEL,MOUNTPOINT,TYPE | awk -F'"' '/disk/ && $0 !~ /sda/ {print}')
+blk=$(lsblk -o NAME,SIZE,LABEL,TYPE -n | awk '$4=="disk" && $1!="sda" {printf "/dev/%s %s %s\n", $1, $2, $3}')
+[ -z "$blk" ] && { dunstify "mounter" "未检测到可移动磁盘"; exit 1; }
+chosen=$(echo "$blk" | dmenu -i -p "挂载:")
+[ -z "$chosen" ] && exit 1
+dev=$(echo "$chosen" | awk '{print $1}')
+# 挂载分区（取第一个分区）
+part=$(lsblk -nlo NAME,TYPE "$dev" | awk '$2=="part"{print "/dev/"$1; exit}')
+[ -z "$part" ] && part="$dev"
+mnt=$(udisksctl mount -b "$part" 2>/dev/null | grep -oP 'mounted at \K.*')
+if [ -n "$mnt" ]; then
+  dunstify "mounter" "已挂载 $part → $mnt"
+  thunar "$mnt" 2>/dev/null &
+else
+  dunstify -u critical "mounter" "挂载失败: $part"
+fi

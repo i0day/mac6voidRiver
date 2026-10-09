@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# 阅读模式：把当前 Firefox 标签页的 URL 转成 about:reader 打开
+# （本 Firefox 构建的 Ctrl+Alt+R 内置绑定失效，用此脚本等效替代）
+echo "$(date '+%H:%M:%S') reader invoked" >> /tmp/reader-debug.log
+WID=$(xdotool getactivewindow 2>/dev/null)
+cls=$(xprop -id "$WID" WM_CLASS 2>/dev/null)
+case "$cls" in
+  *irefox*) : ;;
+  *) WID=$(xdotool search --class firefox | tail -1) ;;
+esac
+[ -z "$WID" ] && { notify-send -t 2000 "阅读模式" "没找到 Firefox 窗口"; exit 1; }
+xdotool windowactivate --sync "$WID" 2>/dev/null || true
+# 关键：所有按键必须 --window 定向到 Firefox，否则激活失败时 ctrl+c 会落到
+# 终端（曾把跑在 st 里的 Hermes 会话打断）
+xdotool key --window "$WID" --clearmodifiers ctrl+l   # 聚焦地址栏
+sleep 0.3
+xdotool key --window "$WID" --clearmodifiers ctrl+a   # 全选
+sleep 0.1
+xdotool key --window "$WID" --clearmodifiers ctrl+c   # 复制
+sleep 0.3
+url=$(xclip -o -selection clipboard 2>/dev/null)
+case "$url" in
+  http*)
+    enc=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$url")
+    # 用 ff-open 绕开坏掉的 firefox remote/parent.lock 机制（直接 firefox --new-tab 会另起进程，看似重启）
+    ff-open "about:reader?url=$enc"
+    ;;
+  *)
+    notify-send -t 2000 "阅读模式" "当前地址不是网页: $url"
+    ;;
+esac

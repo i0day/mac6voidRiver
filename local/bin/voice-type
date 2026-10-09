@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# voice-type: 按住/按一下说话 → whisper.cpp 本地识别 → (可选)LLM 润色 → 打进光标处
+# 用法: voice-type            = 录 6 秒, small 模型, 直接输入
+#       voice-type -d 10      = 录 10 秒
+#       voice-type -m medium  = 用 medium 模型
+#       voice-type -p         = 用 LLM 润色 (qwen3.8)
+LOG="$HOME/.cache/voice-type.log"
+mkdir -p "$HOME/.cache"
+exec >>"$LOG" 2>&1
+echo "===== $(date '+%H:%M:%S') voice-type START args: $* ====="
+set -uo pipefail
+
+# 防并发: 已有实例在跑就直接退出
+exec 9>"$HOME/.cache/voice-type.lock"
+flock -n 9 || { echo "另一实例运行中，跳过"; notify-send "语音输入" "上一次还在处理中，请稍候" -t 2000; exit 0; }
+
+WHISPER="$HOME/src/whisper.cpp/build/bin/whisper-cli"
+MODELS="$HOME/src/whisper.cpp/models"
+MODEL="ggml-base.bin"
+DUR=6
+POLISH=1   # 默认开润色: base 模型快但常出繁体/少标点, 用 LLM 转简体+修标点
+LANG="zh"
+
+while getopts "d:m:pl:" opt; do
+  case $opt in
+    d) DUR="$OPTARG";;
+    m) MODEL="ggml-${MODEL}.bin";;
+    p) POLISH=1;;
+    l) LANG="$OPTARG";;
+  esac
+done
+
+TMP="$(mktemp -d /home/james/.hermes/cache/scratch/voicetype.XXXXXX)"
+trap 'rm -rf "$TMP"' EXIT
+
+# 录音 (16kHz mono 是 whisper 要求)
+# 先记住当前焦点窗口——处理完直接打回这个窗口，不怕中途焦点变化
+TARGET_WIN=$(xdotool getwindowfocus 2>/dev/null || echo "")
+TARGET_CLASS=$(xdotool getwindowfocus getwindowclassname 2>/dev/null || echo "")
+echo "焦点窗口: win=$TARGET_WIN class=$TARGET_CLASS" >&2
+echo "🎤 说话... (${DUR}s)" >&2
+notify-send "🎤 语音输入" "请说话 (${DUR}秒)..." -t 3000 2>/dev/null
+arecord -q -f S16_LE -r 16000 -c 1 -d "$DUR" "$TMP/rec.wav"
+notify-send "⏳ 语音输入" "识别处理中..." -t 5000 2>/dev/null
+
+# 本地识别
+TEXT=$("$WHISPER" -m "$MODELS/$MODEL" -f "$TMP/rec.wav" -l "$LANG" -np 2>/dev/null | sed -E 's/^\[[^]]*-->[^]]*\][[:space:]]*//' | grep -v '^$' | tr '\n' ' ' | sed 's/^ *//;s/ *$//')
+
+if [ -z "$TEXT" ]; then
+  echo "❌ 没识别到内容" >&2
+  exit 1
+fi
+echo "识别: $TEXT" >&2
+
+# LLM 润色 (可选): 去口语词、修标点、保持原意
+if [ "$POLISH" = "1" ]; then
+  KEY=$(grep '^Q38_API_KEY' ~/.hermes/.env | cut -d= -f2)
+  RESP=$(curl -s --max-time 30 https://q38.nypnk.com/v1/chat/completions \
+    -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+    -d "$(python3 -c "
+import json,sys
+t=sys.argv[1]
+print(json.dumps({'model':'halogen-qwen3.8-flash-next','messages':[{'role':'system','content':'你是语音转写润色器。把输入的语音识别文本整理成通顺的简体中文书面语：繁体一律转简体、去掉口头禅(嗯、啊、呃、就是那个)、修正明显识别错误、加正确标点。只输出整理后的文本，不要解释，不要加引号。若文本已是通顺简体则原样输出。'},{'role':'user','content':t}]})", 2>/dev/null)") || true
+  POLISHED=$(echo "$RESP" | python3 -c "import json,sys; print(json.load(sys.stdin)['choices'][0]['message']['content'])" 2>/dev/null || echo "")
+  [ -n "$POLISHED" ] && TEXT="$POLISHED"
+  echo "润色: $TEXT" >&2
+fi
+
+# 输入到光标: 打回录音时的焦点窗口（处理期间焦点可能已变）
+# 先放剪贴板，再按键触发粘贴——对终端里的 nvim 也能用
+# 注意: xclip 会 fork 成守护进程保持剪贴板, 必须关掉它继承的锁 fd (9>&-)，
+# 否则 xclip 常驻进程会永远持有 voice-type.lock，后续每次热键都报「上一次还在处理中」
+printf '%s' "$TEXT" | xclip -selection clipboard 9>&-
+sleep 0.3
+if [ -n "$TARGET_WIN" ]; then
+  xdotool windowfocus --sync "$TARGET_WIN" 2>/dev/null || true
+  sleep 0.3
+fi
+# 检测目标窗口进程树里是否有 nvim（st 的窗口 class 查不出 nvim）
+window_has_nvim() {
+  local win="$1" base frontier p
+  base=$(xdotool getwindowpid "$win" 2>/dev/null) || return 1
+  frontier="$base"
+  local depth=0
+  while [ -n "$frontier" ] && [ $depth -lt 6 ]; do
+    local next=""
+    for p in $frontier; do
+      next="$next $(pgrep -P "$p" 2>/dev/null | tr '\n' ' ')"
+    done
+    frontier="$next"
+    for p in $frontier; do
+      [ "$(cat /proc/$p/comm 2>/dev/null)" = "nvim" ] && return 0
+    done
+    depth=$((depth+1))
+  done
+  return 1
+}
+
+if window_has_nvim "$TARGET_WIN"; then
+  # 用户的 nvim 用 Alt+V 粘贴系统剪贴板
+  xdotool key --clearmodifiers alt+v
+  echo "✅ 已 Alt+V 粘贴到 nvim (win=$TARGET_WIN)" >&2
+else
+  case "$TARGET_CLASS" in
+    st|XTerm|URxvt|kitty|Alacritty|konsole)
+      xdotool key --clearmodifiers shift+Insert
+      echo "✅ 已粘贴到终端 (win=$TARGET_WIN class=$TARGET_CLASS)" >&2 ;;
+    *)
+      xdotool key --clearmodifiers ctrl+v
+      echo "✅ 已 Ctrl+V (win=$TARGET_WIN class=$TARGET_CLASS)" >&2 ;;
+  esac
+fi
+notify-send "✅ 语音输入" "$TEXT" -t 4000 2>/dev/null

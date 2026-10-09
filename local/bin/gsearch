@@ -1,0 +1,10 @@
+#!/bin/bash
+# gsearch: 选中文字 -> Google 搜索 (X selection, 浏览器/终端通用)
+# 先在任意地方用鼠标/键盘选中文字, 按 Alt+Ctrl+G 即搜
+sel=$(xclip -o -selection primary 2>/dev/null)
+[ -z "$sel" ] && sel=$(xclip -o -selection clipboard 2>/dev/null)
+[ -z "$sel" ] && { dunstify -a gsearch -u low "没有选中文本"; exit 1; }
+# 只取第一行, 防止多行炸 URL
+sel=$(printf '%s' "$sel" | head -1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+# 用 ff-open（xdotool 驱动已运行窗口），绕开坏掉的 Firefox remote/parent.lock 机制
+ff-open "https://www.google.com/search?q=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$sel")"

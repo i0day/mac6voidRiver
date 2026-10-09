@@ -1,0 +1,10 @@
+#!/bin/bash
+# 电源菜单 (dwm Super+BackSpace / Super+Shift+Q / Super+P)
+choice=$(printf "锁定 slock\n挂起 suspend\n重启 reboot\n关机 poweroff\n注销 logout" | dmenu -i -p "sysact:" | awk '{print $1}')
+case "$choice" in
+  锁定) slock ;;
+  挂起) slock & sleep 1; sudo -A zzz 2>/dev/null || systemctl suspend ;;
+  重启) sudo -A reboot 2>/dev/null || systemctl reboot ;;
+  关机) sudo -A poweroff 2>/dev/null || systemctl poweroff ;;
+  注销) touch ~/.cache/x_stop; pkill -TERM -P $$ 2>/dev/null; kill "$(cat ~/.cache/pidofbar 2>/dev/null)" 2>/dev/null; pkill -x dwm ;;
+esac

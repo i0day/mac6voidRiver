@@ -1,0 +1,6 @@
+#!/bin/sh
+# sendfile-stop — 停掉所有 sendfile 传文件服务
+pkill -f "python3.*8777" 2>/dev/null
+pkill -f "sendfile-qr" 2>/dev/null
+notify-send -t 2000 "📴 传文件服务已停止"
+echo stopped

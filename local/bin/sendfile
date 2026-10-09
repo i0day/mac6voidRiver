@@ -1,0 +1,62 @@
+#!/bin/sh
+# sendfile — 选中文件，起局域网直传 HTTP 服务，屏幕显示二维码，手机扫码即下
+# 用法: sendfile [文件]   不带参数则 fzf 选
+# 诊断日志: /tmp/sendfile-debug.log
+LOG=/tmp/sendfile-debug.log
+{
+echo "===== sendfile start $(date '+%F %T') args=[$*] tty=$(tty 2>/dev/null || echo none) ====="
+echo "PATH=$PATH"
+} >> "$LOG" 2>&1
+exec >>"$LOG" 2>&1
+set -x
+# 确保关键工具能被找到 (sxhkd 拉起的环境 PATH 可能不含 ~/.local/bin, /usr/local/bin)
+export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+if [ -n "$1" ]; then
+    FILE="$1"
+else
+    FILE=$(find ~ -maxdepth 3 -type f 2>/dev/null | fzf --prompt='选文件要传给手机> ')
+fi
+[ -f "$FILE" ] || { echo "没选中文件"; exit 1; }
+DIR=$(dirname "$(realpath "$FILE")")
+BASE=$(basename "$FILE")
+TOKEN=$(head -c 8 /dev/urandom | od -An -tx1 | tr -d ' \n')
+IP=$(ip route get 1 | grep -o 'src [0-9.]*' | cut -d ' ' -f2)
+PORT=8777
+ENC=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$BASE")
+
+cd "$DIR"
+# 起服务前清掉旧实例: 端口被上次残留服务占据会导致新 token 对不上 → 扫码 404
+pkill -f "bin/sendfile-server" 2>/dev/null || true
+sleep 0.3
+# setsid: 服务器脱离 shell 会话, 防外层 st(fzf)窗口关闭时 SIGHUP 杀掉它
+# (dash 无 job control, 后台子进程与 shell 同进程组, 会话 leader 退出会连坐)
+setsid "$HOME/.local/bin/sendfile-server" "$PORT" "$TOKEN" "$BASE" &
+SRVPID=$!
+sleep 0.7
+# 确认服务真的起来了
+if ! kill -0 "$SRVPID" 2>/dev/null; then
+    echo "服务启动失败(端口可能被占), 尝试随机端口" >&2
+    PORT=$((8800 + RANDOM % 99))
+    "$HOME/.local/bin/sendfile-server" "$PORT" "$TOKEN" "$BASE" &
+    SRVPID=$!
+    sleep 0.5
+fi
+
+URL="http://${IP}:${PORT}/${TOKEN}/${ENC}"
+echo "$URL" > /tmp/sendfile-last-url.txt
+
+qrencode -t ANSIUTF8 -m 2 -s 6 "$URL" > /tmp/sendfile-qr.txt
+
+# 先弹二维码窗口 (关键步骤, 放在可能失败的 notify-send 之前)
+# 不用 read 等按键: 刚弹出的窗口会吞掉 fzf 残留的 Enter 导致秒关秒杀。
+# 改为 90 秒自动关窗+杀服务; 关窗口(SIGHUP)也触发清理; 手动可 sendfile-stop
+ST=$(command -v st || echo /usr/local/bin/st)
+# setsid: 脱离当前会话, 防止 fzf 外层 st 窗口关闭时 SIGHUP 连坐杀掉这个二维码窗口
+setsid "$ST" -e sh -c "trap 'kill $SRVPID 2>/dev/null' EXIT; cat /tmp/sendfile-qr.txt; echo; echo 'URL: $URL'; echo; echo '手机扫码即下 · 10 分钟内有效, 关窗即停' ; sleep 600" </dev/null >/dev/null 2>&1 &
+echo "已发出二维码窗口命令"
+
+# 通知失败不影响弹窗
+notify-send -u normal -t 4000 "📲 传文件服务已启动" "$BASE
+二维码窗口已弹出，10 分钟内有效（关窗即停）" 2>/dev/null || true
+
+echo "OK 服务已起 pid $SRVPID: $URL"

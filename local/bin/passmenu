@@ -1,0 +1,8 @@
+#!/bin/bash
+# passmenu — 未安装 pass 时给出提示（安装 pass + GPG 后可接 rofi/dmenu）
+if command -v pass >/dev/null; then
+  pass=$(printf "%s\n" "$(pass ls | tr ' ' '\n' | grep -v '^$')" | dmenu -i -p "pass:" | tr -d '\n')
+  [ -n "$pass" ] && pass show "$pass" | head -1 | tr -d '\n' | xclip -selection clipboard && dunstify "密码已复制"
+else
+  dunstify "passmenu" "未安装 pass。安装: sudo apt install pass && pass init <gpg-id>"
+fi

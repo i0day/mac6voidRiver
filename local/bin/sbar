@@ -1,0 +1,135 @@
+#!/bin/bash 
+# INIT
+printf "$$" > ~/.cache/pidofbar
+sec=0
+
+caffeine_status_file="$HOME/.cache/caffeine_status"
+icon_enabled=$'\uf0f4 '  # 咖啡杯=防休眠开启
+icon_disabled=$'\uf186 '  # 月亮=允许休眠
+
+# Function to get the caffeine status
+caffeine_status() {
+    if [[ -f "$caffeine_status_file" ]]; then
+        local isActive
+        isActive=$(<"$caffeine_status_file")
+        if [[ $isActive -eq 1 ]]; then
+            echo "$icon_enabled"
+        else
+            echo "$icon_disabled"
+        fi
+    else
+        # Default to disabled if the file doesn't exist
+        echo "$icon_disabled"
+    fi
+}
+
+# MODULES
+
+update_memory () {
+	memory="$(free -h | sed -n "2s/\([^ ]* *\)\{2\}\([^ ]*\).*/\2/p")"
+}
+
+update_time () {
+	time="$(date "+[ %a %d %b %I:%M%P]")"
+}
+
+#update_weather () {
+#	weather="$(curl -s "wttr.in?format=1"| sed -E "s/^(.).*\+/\1/")"
+#}
+
+update_bat () {
+	# you might need to change the path depending on your device
+#	read -r bat_status </sys/class/power_supply/BAT0/status
+#	read -r bat_capacity </sys/class/power_supply/BAT0/capacity
+#	bat="$bat_status$bat_capacity%"
+BATTERY=0
+BATTERY_INFO=$(acpi -b | grep "Battery ${BATTERY}")
+BATTERY_STATE=$(echo "${BATTERY_INFO}" | grep -wo "Full\|Charging\|Discharging")
+BATTERY_POWER=$(echo "${BATTERY_INFO}" | grep -o '[0-9]\+%' | tr -d '%')
+BATTERY_ICON=0
+URGENT_VALUE=10
+
+if [[ "${BATTERY_POWER}" -le "${URGENT_VALUE}" ]]; then
+  BATTERY_ICON=""
+elif [[ "${BATTERY_POWER}" -le 25 ]]; then
+  BATTERY_ICON=""
+elif [[ "${BATTERY_POWER}" -le 50 ]]; then
+  BATTERY_ICON=""
+elif [[ "${BATTERY_POWER}" -le 75 ]]; then
+  BATTERY_ICON=""
+else
+  BATTERY_ICON=""
+fi
+
+if [[ "${BATTERY_STATE}" = "Charging" ]]; then
+  bat="${BATTERY_ICON}  ${BATTERY_POWER}%+"
+elif [[ "${BATTERY_STATE}" = "Discharging" ]]; then
+   bat="${BATTERY_ICON}  ${BATTERY_POWER}%-"
+else
+  bat="${BATTERY_ICON}  ${BATTERY_POWER}%"
+fi
+
+#if [[ "${BATTERY_POWER}" -le "${URGENT_VALUE}" ]]; then
+#  exit 33
+#fi
+}
+
+update_vol () {
+	vol="$([ "$(pamixer --get-mute)" = "false" ] && printf '\uf028  ' || printf '\uf026  ')$(pamixer --get-volume)%"
+}
+
+update_backlight () {
+	# 本机背光设备是 acpi_video0, 直接用 brightnessctl 更稳
+	actual=$(brightnessctl get 2>/dev/null)
+	max=$(brightnessctl max 2>/dev/null)
+	[ -n "$actual" ] && [ -n "$max" ] && [ "$max" -gt 0 ] 2>/dev/null \
+		&& backlight="$((actual*100/max))%" || backlight="N/A"
+}
+
+# For calcurse users, refer https://github.com/pystardust/automeet
+#update_event () {
+#	event="$(calcurse -n | sed 1d | \
+#		sed -E "s_^ *\[(.*):(.*)\] ([^\t]*)\t?.*_[\1h \2m->\3]_")"
+#	[ "[]" = "$event" ] && event=""
+#}
+
+
+# modules that don't update on their own need to be run at the start for getting their initial value
+update_vol
+update_backlight
+
+update_lyric () {
+	lyric="$("$HOME/.local/bin/bar-lyric" 2>/dev/null)"
+}
+update_lyric
+
+display () {
+	#printf "%s\n" " $event [$weather] [$memory $cpu] [$bat] [$backlight] [$vol] $time "
+	xsetroot -name "[$(caffeine_status)] [ $memory] [$bat] [󰃝 $backlight] [$vol] $time ${lyric:+| $lyric}"
+}
+
+# SIGNALLING
+# trap	"<function>;display"		"RTMIN+n"
+trap	"update_vol;display"		"RTMIN"
+trap	"update_backlight;display" 	"RTMIN+1"
+trap	"update_bat;display" 		"RTMIN+2"
+# to update it from external commands
+## kill -m "$(cat ~/.cache/pidofbar)"
+# where m = 34 + n
+
+while true
+do
+	sleep 1 & wait && {
+		# 歌词要秒级同步: 每秒更新并刷新 bar
+		update_lyric
+		[ $((sec % 5 )) -eq 0 ] && update_time 	# update time every 5 seconds
+		[ $((sec % 15)) -eq 0 ] && update_memory
+		[ $((sec % 60)) -eq 0 ] && update_bat
+	#	[ $((sec % 3600)) -eq 2 ] && update_weather
+		#[ $((sec % 300)) -eq 1 ] && update_event
+
+		# 每秒刷新显示 (配合歌词同步)
+		display
+		sec=$((sec + 1))
+	}
+done

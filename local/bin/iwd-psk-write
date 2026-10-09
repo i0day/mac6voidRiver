@@ -1,0 +1,31 @@
+#!/usr/bin/env python3
+"""Write an iwd PSK profile for a network. SSID as argv[1], passphrase on stdin
+(so the passphrase never shows in the process listing). Prints the profile path.
+
+Stores the raw passphrase (Passphrase=) rather than a precomputed PMK:
+WPA3/SAE-capable networks (e.g. Android phone hotspots) need the
+passphrase for SAE; iwd derives the PMK itself when WPA2-only.
+"""
+import sys, os
+
+if len(sys.argv) != 2:
+    sys.exit("usage: iwd-psk-write <SSID>  < passphrase")
+ssid = sys.argv[1]
+passphrase = sys.stdin.read().rstrip("\n")
+if not passphrase:
+    sys.exit("empty passphrase")
+
+# iwd storage naming: safe chars pass through, everything else is hex-encoded
+# with a leading '='. Safe = alnum, '-', '_', '.'
+safe = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.")
+if all(c in safe for c in ssid):
+    name = ssid
+else:
+    name = "=" + ssid.encode().hex()
+
+path = os.path.join("/var/lib/iwd", name + ".psk")
+content = "[Security]\nPassphrase=%s\n" % passphrase
+fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+with os.fdopen(fd, "w") as f:
+    f.write(content)
+print(path)

@@ -1,0 +1,10 @@
+#!/bin/bash
+# dunst-quiet: 勿扰模式开关 (暂停/恢复通知)
+export DBUS_SESSION_BUS_ADDRESS="unix:path=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/bus"
+if dunstctl is-paused | grep -q true; then
+    dunstctl set-paused false
+    dunstify -a dunst-quiet -u low "🔔 通知已恢复"
+else
+    dunstctl set-paused true
+    dunstify -a dunst-quiet -u low "🔕 勿扰模式（再按一次恢复）"
+fi

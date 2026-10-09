@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# say "text" — natural neural TTS via Edge voices (needs network)
+# options: -v <voice>  (default en-US-AvaNeural), -f <file> read a file
+voice="en-US-AvaNeural"
+text=""
+while getopts "v:f:h" opt; do
+  case $opt in
+    v) voice="$OPTARG";;
+    f) text="$(cat "$OPTARG")";;
+    h) echo "usage: say [-v voice] \"text\"   |   say -f file.txt"
+       echo "list voices: edge-tts --list-voices"
+       exit 0;;
+  esac
+done
+shift $((OPTIND-1))
+[ -z "$text" ] && text="$*"
+[ -z "$text" ] && { echo "no text given"; exit 1; }
+out=$(mktemp /tmp/say-XXXXXX.mp3)
+edge-tts --voice "$voice" --text "$text" --write-media "$out" 2>/dev/null \
+  && ffplay -nodisp -autoexit -loglevel error "$out"
+rm -f "$out"

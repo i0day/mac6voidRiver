@@ -1,0 +1,15 @@
+#!/bin/sh
+# mpd-toggle — 一键开关 MPD 守护进程（Void runit 环境，不依赖 systemd）
+PIDF=~/.config/mpd/pid
+if [ -f "$PIDF" ] && kill -0 "$(cat $PIDF)" 2>/dev/null; then
+    kill "$(cat $PIDF)" 2>/dev/null
+    notify-send -t 2000 "🔇 MPD 已停止"
+else
+    mpd ~/.config/mpd/mpd.conf
+    sleep 0.5
+    if [ -f "$PIDF" ] && kill -0 "$(cat $PIDF)" 2>/dev/null; then
+        notify-send -t 2000 "🎵 MPD 已启动"
+    else
+        notify-send -t 5000 "❌ MPD 启动失败: tail ~/.config/mpd/log"
+    fi
+fi

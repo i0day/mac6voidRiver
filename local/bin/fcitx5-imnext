@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# fcitx5-imnext: cycle to next input method in profile order.
+# DEPRECATED 2026-10-04: 旧 Super+Ctrl+i 绑定已废弃（随 xbindkeys 卸载，sxhkd 未接管）。
+# 输入法循环统一用 fcitx5 原生 Ctrl+Super+Space (EnumerateForwardKeys)。
+# 脚本保留备用；如需重新绑定，在 sxhkdrc 加 @super+ctrl+i -> fcitx5-imnext。
+LIST="cassotis pinyin rime"
+cur="$(fcitx5-remote -n 2>/dev/null)"
+next=""
+found=0
+for im in $LIST; do
+  if [ $found -eq 1 ]; then next="$im"; break; fi
+  [ "$im" = "$cur" ] && found=1
+done
+# not in list (keyboard-us / inactive) -> start at first
+[ -z "$next" ] && next="cassotis"
+fcitx5-remote -o >/dev/null 2>&1
+fcitx5-remote -s "$next" >/dev/null 2>&1

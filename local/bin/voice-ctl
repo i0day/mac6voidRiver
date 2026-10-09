@@ -1,0 +1,183 @@
+#!/usr/bin/env bash
+# voice-ctl: 语音控制电脑
+# 流程: 录音 → whisper 识别 → qwen3.8 解析成 JSON 指令 → 执行对应动作
+#       解析结果为 none 时 = 普通文字 → 走打字粘贴 (同 voice-type)
+# 热键: Super+Ctrl+V (替代 voice-type 作为统一入口)
+LOG="$HOME/.cache/voice-type.log"
+mkdir -p "$HOME/.cache"
+exec >>"$LOG" 2>&1
+echo "===== $(date '+%H:%M:%S') voice-ctl START ====="
+set -uo pipefail
+
+exec 9>"$HOME/.cache/voice-type.lock"
+flock -n 9 || { echo "另一实例运行中，跳过"; notify-send "语音" "上一次还在处理中，请稍候" -t 2000; exit 0; }
+
+WHISPER="$HOME/src/whisper.cpp/build/bin/whisper-cli"
+MODEL="$HOME/src/whisper.cpp/models/ggml-base.bin"
+DUR="${1:-6}"
+
+TARGET_WIN=$(xdotool getwindowfocus 2>/dev/null || echo "")
+TARGET_CLASS=$(xdotool getwindowfocus getwindowclassname 2>/dev/null || echo "")
+
+notify-send "🎤 语音控制" "请说话 (${DUR}秒)..." -t 3000
+TMP="$(mktemp -d /home/james/.hermes/cache/scratch/voicectrl.XXXXXX)"
+trap 'rm -rf "$TMP"' EXIT
+arecord -q -f S16_LE -r 16000 -c 1 -d "$DUR" "$TMP/rec.wav"
+notify-send "⏳ 语音控制" "解析中..." -t 4000
+
+TEXT=$("$WHISPER" -m "$MODEL" -f "$TMP/rec.wav" -l zh -np 2>/dev/null | sed -E 's/^\[[^]]*-->[^]]*\][[:space:]]*//' | grep -v '^$' | tr '\n' ' ' | sed 's/^ *//;s/ *$//')
+[ -z "$TEXT" ] && { echo "没识别到内容"; exit 1; }
+echo "识别: $TEXT" >&2
+
+KEY=$(grep '^Q38_API_KEY' ~/.hermes/.env | cut -d= -f2)
+SYS='你是语音电脑控制解析器。把用户口述转成一个 JSON 指令，只允许以下 action:
+{"action":"brightness","target":"screen|kbd","value":"+10%|-10%|50%"}
+{"action":"volume","value":"+10%|-10%|20%|mute|unmute|50%"}
+{"action":"open","app":"brave|thunar|htop|btop|terminal"}
+{"action":"window","op":"minimize|close|next|maximize"}
+{"action":"screenshot"}
+{"action":"media","op":"play|pause|next|prev|stop"}
+{"action":"sleep","minutes":<int>}
+{"action":"search","query":"<string>"}
+{"action":"say","text":"<string>"}
+{"action":"none"}
+只输出 JSON，无 markdown，无解释。非控制意图的文字一律返回 none。危险的破坏性请求(删除/格式化等)一律返回 none。'
+
+RESP=$(curl -s --max-time 30 https://q38.nypnk.com/v1/chat/completions \
+  -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d "$(python3 -c "
+import json,sys
+print(json.dumps({'model':'halogen-qwen3.8-flash-next','temperature':0,'max_tokens':120,'messages':[{'role':'system','content':sys.argv[1]},{'role':'user','content':sys.argv[2]}]}))" "$SYS" "$TEXT" 2>/dev/null)" || true)
+
+PARSED=$(echo "$RESP" | python3 -c "
+import json,sys,re
+try:
+    t = json.load(sys.stdin)['choices'][0]['message']['content']
+    m = re.search(r'\{.*\}', t, re.S)
+    d = json.loads(m.group(0))
+    print(d.get('action','none'))
+    json.dump(d, open('/tmp/voice_ctl_cmd.json','w'))
+except Exception:
+    print('none')
+" 2>/dev/null)
+echo "指令: $PARSED" >&2
+
+paste_text() {
+  printf '%s' "$1" | xclip -selection clipboard 9>&-
+  sleep 0.3
+  [ -n "$TARGET_WIN" ] && xdotool windowfocus --sync "$TARGET_WIN" 2>/dev/null || true
+  sleep 0.3
+  window_has_nvim() {
+    local win="$1" base frontier p depth=0
+    base=$(xdotool getwindowpid "$win" 2>/dev/null) || return 1
+    frontier="$base"
+    while [ -n "$frontier" ] && [ $depth -lt 6 ]; do
+      local next=""
+      for p in $frontier; do next="$next $(pgrep -P "$p" 2>/dev/null | tr '\n' ' ')"; done
+      frontier="$next"
+      for p in $frontier; do [ "$(cat /proc/$p/comm 2>/dev/null)" = "nvim" ] && return 0; done
+      depth=$((depth+1))
+    done
+    return 1
+  }
+  if window_has_nvim "$TARGET_WIN"; then
+    xdotool key --clearmodifiers alt+v
+  else
+    case "$TARGET_CLASS" in
+      st|XTerm|URxvt|kitty|Alacritty|konsole) xdotool key --clearmodifiers shift+Insert ;;
+      *) xdotool key --clearmodifiers ctrl+v ;;
+    esac
+  fi
+}
+
+case "$PARSED" in
+  brightness)
+    TGT=$(python3 -c "import json; d=json.load(open('/tmp/voice_ctl_cmd.json')); print(d.get('target','screen'))")
+    VAL=$(python3 -c "import json; d=json.load(open('/tmp/voice_ctl_cmd.json')); print(d.get('value','+10%'))")
+    if [ "$TGT" = "kbd" ]; then
+      # kbdbrightness 只认 up/down
+      case "$VAL" in
+        +*) kbdbrightness up ;;
+        -*) kbdbrightness down ;;
+        *)  kbdbrightness up ;;
+      esac
+    else
+      case "$VAL" in
+        +*) brightnessctl -q s +10% ;;
+        -*) brightnessctl -q s 10%- ;;
+        *)  brightnessctl -q s "$VAL" 2>/dev/null || true ;;
+      esac
+    fi
+    notify-send "💡 亮度" "$TGT $VAL" -t 2000
+    CUR=$(brightnessctl get 2>/dev/null; echo)
+    ;;
+  volume)
+    VAL=$(python3 -c "import json; d=json.load(open('/tmp/voice_ctl_cmd.json')); print(d.get('value','+10%'))")
+    case "$VAL" in
+      mute)   amixer -q set Master mute ;;
+      unmute) amixer -q set Master unmute ;;
+      +*)     amixer -q set Master 10%+ ;;
+      -*)     amixer -q set Master 10%- ;;
+      *)      amixer -q set Master "$VAL" ;;
+    esac
+    notify-send "🔊 音量" "$VAL" -t 2000
+    ;;
+  open)
+    APP=$(python3 -c "import json; d=json.load(open('/tmp/voice_ctl_cmd.json')); print(d.get('app','brave'))")
+    case "$APP" in
+      brave)     setsid brave >/dev/null 2>&1 & ;;
+      thunar|files) setsid Thunar >/dev/null 2>&1 & ;;
+      htop)      st -e htop & ;;
+      btop)      st -e btop & ;;
+      terminal)  st & ;;
+      *)         xdg-open "$APP" >/dev/null 2>&1 & ;;
+    esac
+    notify-send "🚀 启动" "$APP" -t 2000
+    ;;
+  window)
+    OP=$(python3 -c "import json; d=json.load(open('/tmp/voice_ctl_cmd.json')); print(d.get('op','minimize'))")
+    W=${TARGET_WIN:-$(xdotool getwindowfocus)}
+    case "$OP" in
+      minimize) xdotool windowminimize "$W" ;;
+      close)    xdotool windowclose "$W" ;;
+      maximize) xdotool windowsize "$W" 100% 100% ;;
+      next)     xdotool key alt+Tab ;;
+    esac
+    notify-send "🪟 窗口" "$OP" -t 2000
+    ;;
+  screenshot)
+    f=~/Pictures/shot-$(date +%H%M%S).png
+    maim "$f" && notify-send "📸 已截图" "$f" -t 3000
+    ;;
+  media)
+    OP=$(python3 -c "import json; d=json.load(open('/tmp/voice_ctl_cmd.json')); print(d.get('op','play'))")
+    case "$OP" in
+      play)  xdotool key XF86AudioPlay ;;
+      pause) xdotool key XF86AudioPause ;;
+      next)  xdotool key XF86AudioNext ;;
+      prev)  xdotool key XF86AudioPrev ;;
+      stop)  xdotool key XF86AudioStop ;;
+    esac
+    notify-send "🎵 媒体" "$OP" -t 2000
+    ;;
+  sleep)
+    M=$(python3 -c "import json; d=json.load(open('/tmp/voice_ctl_cmd.json')); print(d.get('minutes',10))")
+    ( sleep $((M*60)); xset dpms force off ) &
+    notify-send "😴 定时" "${M}分钟后息屏" -t 3000
+    ;;
+  search)
+    Q=$(python3 -c "import json,urllib.parse; d=json.load(open('/tmp/voice_ctl_cmd.json')); print(urllib.parse.quote(d.get('query','')))")
+    xdg-open "https://www.google.com/search?q=$Q" >/dev/null 2>&1 &
+    notify-send "🔍 搜索" "$Q" -t 2000
+    ;;
+  say)
+    T=$(python3 -c "import json; d=json.load(open('/tmp/voice_ctl_cmd.json')); print(d.get('text',''))")
+    say "$T" &
+    notify-send "🗣 朗读" "$T" -t 2000
+    ;;
+  *)
+    paste_text "$TEXT"
+    notify-send "✅ 语音输入" "$TEXT" -t 4000
+    ;;
+esac
+echo "✅ 执行完毕: $PARSED" >&2

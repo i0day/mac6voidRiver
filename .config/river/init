@@ -1,0 +1,210 @@
+#!/bin/sh
+# ~/.config/river/init — river 启动配置（自 dwm 迁移，键位/主题对齐 dwm）
+set -x
+
+# ===== 主题：抄 dwm config.h 边框色 + wal =====
+riverctl border-width 2
+riverctl border-color-focused 0x7d97ad      # dwm selbordercolor 深钢蓝
+riverctl border-color-unfocused 0x2c333b   # dwm normbordercolor 暗板岩灰
+riverctl border-color-urgent 0xd7b79a      # wal color6 做 urgent
+riverctl set-cursor-warp on-focus-change
+# 焦点跟随鼠标（dwm 手感；river 默认 disabled）
+riverctl focus-follows-cursor normal
+
+# 触摸板 tap-to-click（river 原生 libinput；X 的 touchpad-toggle 脚本管不到 Wayland 设备）
+TP="pointer-1452-656-bcm5974"
+riverctl input "$TP" tap enabled
+riverctl input "$TP" click-method clickfinger
+riverctl input "$TP" drag enabled
+riverctl xcursor-theme "$(gsettings get org.gnome.desktop.cursor name 2>/dev/null | tr -d "'" || echo default)" 24 2>/dev/null || true
+
+# 键盘重复率（dwm 时代 xset r rate 300 50 的近似）
+riverctl set-repeat 30 400
+
+# ===== 布局：rivertile dwindle，gaps 对齐 dwm vanitygaps =====
+riverctl default-layout rivertile
+rivertile -view-padding 10 -outer-padding 10 &
+
+# ===== 光标浮动窗口操作（dwm: Mod1+Button2/3 → 这里用 Super+Button2/3）=====
+# river 用 Linux input 事件名 BTN_*
+riverctl map-pointer normal Mod4 BTN_LEFT move
+riverctl map-pointer normal Mod4 BTN_RIGHT resize
+# 中键 = zoom（dwm 标题栏中键等价）
+riverctl map-pointer normal Mod4 BTN_MIDDLE zoom
+# 注：dwm Super+滚轮调间隙 无等价 — river 0.3 map-pointer 只认 BTN_* 按下码，不认滚轮轴
+
+# ===== 核心窗口键（与 dwm MODKEY=Super 一致）=====
+riverctl map normal Mod4 Return spawn 'foot'
+riverctl map normal Mod4 q close
+riverctl map normal Mod4 j focus-view next
+riverctl map normal Mod4 k focus-view previous
+riverctl map normal Mod4+Shift j swap next
+riverctl map normal Mod4+Shift k swap previous
+# master 比例 ≈ dwm setmfact ∓0.05（rivertile 运行时命令是 main-ratio，见 man rivertile）
+riverctl map -repeat normal Mod4 h spawn 'riverctl send-layout-cmd rivertile "main-ratio -0.05"'
+riverctl map -repeat normal Mod4 l spawn 'riverctl send-layout-cmd rivertile "main-ratio +0.05"'
+# master 数量 ≈ dwm incnmaster
+riverctl map normal Mod4 o spawn 'riverctl send-layout-cmd rivertile "main-count +1"'
+riverctl map normal Mod4+Shift o spawn 'riverctl send-layout-cmd rivertile "main-count -1"'
+# zoom ≈ dwm Super+space 当前窗口置顶
+riverctl map normal Mod4 space zoom
+# tag: Super+1..9 切换（dwm view），Shift 发送（dwm tag），Ctrl 叠加视图（toggleview）
+i=1
+while [ $i -le 9 ]; do
+    riverctl map normal Mod4 $i set-focused-tags $((1 << (i-1)))
+    # dwm tag = 把当前窗口设为该 tag
+    riverctl map normal Mod4+Shift $i set-view-tags $((1 << (i-1)))
+    riverctl map normal Mod4+Control $i toggle-focused-tags $((1 << (i-1)))
+    i=$((i+1))
+done
+riverctl map normal Mod4 0 set-focused-tags 511            # 所有 tag
+riverctl map normal Mod4+Shift 0 set-view-tags 511         # 窗口挂全部 tag
+# dwm Super+s sticky → 等价：窗口打到全部 tag
+riverctl map normal Mod4 s spawn 'riverctl set-view-tags 511'
+# 布局切换（dwm layouts → rivertile 命令）
+# Super+t tile 左主（默认） / Super+Shift+t bstack 上主
+riverctl map normal Mod4 t spawn 'riverctl send-layout-cmd rivertile "main-location left"'
+riverctl map normal Mod4+Shift t spawn 'riverctl send-layout-cmd rivertile "main-location top"'
+# 注：原 Super+y / Super+Shift+y 声称对应 dwm spiral/dwindle，但 rivertile 无该模式，
+# 且与 Super+y 的 mpd-toggle 冲突（后映射覆盖），已删除。Super+y = mpd-toggle。
+# 间隙控制（dwm §5）：Super+a 临时全关, Super+Shift+a 恢复默认(10px)
+# Super+z / Super+x = 间隙 +3px / -3px（与 dwm 文档一致；zoom 在 Super+space）
+riverctl map normal Mod4 a spawn 'pkill -x rivertile; rivertile -view-padding 0 -outer-padding 0 &'
+riverctl map normal Mod4+Shift a spawn 'pkill -x rivertile; rivertile -view-padding 10 -outer-padding 10 &'
+riverctl map normal Mod4 z spawn '~/.local/bin/river-gaps +3'
+riverctl map normal Mod4 x spawn '~/.local/bin/river-gaps -3'
+# Super+Tab = 回到上一组标签（dwm 语义）
+riverctl map normal Mod4 Tab focus-previous-tags
+# 显示器焦点/送窗（dwm Super+Left/Right）
+riverctl map normal Mod4 Left focus-output left
+riverctl map normal Mod4 Right focus-output right
+riverctl map normal Mod4+Shift Left send-to-output left
+riverctl map normal Mod4+Shift Right send-to-output right
+# 全屏 / 浮动切换（dwm: Super+f 全屏, Super+Shift+f 浮动）
+riverctl map normal Mod4 f toggle-fullscreen
+riverctl map normal Mod4+Shift f toggle-float
+# 电源菜单（dwm Super+Shift+q / Super+BackSpace / Super+p 都是 powermenu）
+riverctl map normal Mod4+Shift q spawn '~/.local/bin/powermenu'
+riverctl map normal Mod4 BackSpace spawn '~/.local/bin/powermenu'
+riverctl map normal Mod4 p spawn '~/.local/bin/powermenu'
+# 退出/注销
+riverctl map normal Mod4+Control e exit
+
+# ===== 启动程序（KEYBINDINGS.md §6）=====
+riverctl map normal Mod4 d spawn 'rofi -show run'
+riverctl map normal Mod4+Shift d spawn 'passmenu'
+riverctl map normal Mod4 F8 spawn 'rofi -show drun'
+riverctl map normal Mod4 w spawn 'firefox'
+riverctl map normal Mod4+Shift w spawn 'wifimenu'
+riverctl map normal Mod4+Shift r spawn 'foot -e htop'
+riverctl map normal Mod4 n spawn 'foot -e nvim -c VimwikiIndex'
+riverctl map normal Mod4 m spawn 'foot -e ncmpcpp'
+# 一键开关 mpd 服务器（未启动时 ncmpcpp 报 connection refused；再按一次停止）
+riverctl map normal Mod4 y spawn '~/.local/bin/mpd-toggle'
+riverctl map normal Mod4 grave spawn 'dmenuunicode'
+
+# ===== 小工具层 Super+Ctrl（KEYBINDINGS.md §7）=====
+riverctl map normal Control+Mod4 c spawn 'dcalc'
+riverctl map normal Control+Mod4 q spawn 'qrshare'
+riverctl map normal Control+Mod4 o spawn 'ocrpick'
+riverctl map normal Control+Mod4 s spawn 'sleeptimer'
+riverctl map normal Control+Mod4 r spawn 'redshift-toggle'
+riverctl map normal Control+Mod4 b spawn 'bt-toggle'
+riverctl map normal Mod4+Mod1 b spawn 'bt-earbud'
+riverctl map normal Control+Mod4 t spawn '~/.local/bin/touchpad-toggle-wayland'
+
+# ===== 音量 / 显示（KEYBINDINGS.md §8）=====
+riverctl map normal Mod4 minus spawn 'pamixer -d 5; ~/.local/bin/vol-osd show'
+riverctl map normal Mod4+Shift minus spawn 'pamixer -d 15; ~/.local/bin/vol-osd show'
+riverctl map normal Mod4 equal spawn 'pamixer -i 5; ~/.local/bin/vol-osd show'
+riverctl map normal Mod4+Shift equal spawn 'pamixer -i 15; ~/.local/bin/vol-osd show'
+riverctl map normal Mod4+Shift m spawn '~/.local/bin/vol-osd mute'
+# caffeine: Super+[ 禁止休眠, Super+] 解除
+riverctl map normal Mod4 bracketleft spawn '~/.local/bin/caffeine enable'
+riverctl map normal Mod4 bracketright spawn '~/.local/bin/caffeine disable'
+riverctl map normal Mod4+Shift p spawn 'wifimenu'
+riverctl map normal Mod4 F4 spawn 'foot -e pulsemixer'
+riverctl map normal Mod4 F5 spawn '~/.local/bin/wal-theme-reload'
+riverctl map normal Mod4 F9 spawn 'mounter'
+riverctl map normal Mod4 F10 spawn 'unmounter'
+riverctl map normal Mod4 F11 spawn 'mpv /dev/video0'
+riverctl map normal Mod4 F2 spawn 'foot -e bc'
+
+# ===== 截图（KEYBINDINGS.md §9）=====
+riverctl map normal None Print spawn 'grim "$HOME/screenshot-$(date +%Y%m%d-%H%M%S).png" && notify-send -t 1500 "截图" "已存到家目录"'
+riverctl map normal Shift Print spawn '~/.local/bin/maimpick'
+
+# ===== sxhkd 热键全量迁移（保持原键位，脚本走 Wayland  shim）=====
+# 剪贴板
+riverctl map normal Control+Mod1 c spawn 'clipmenu'
+riverctl map normal Control+Mod1 s spawn 'dunst-quiet'
+riverctl map normal Control+Mod1 z spawn 'dunst-clear'
+riverctl map normal Control+Mod1 g spawn 'gsearch'
+riverctl map normal Control+Mod1 o spawn 'openurl'
+riverctl map normal Control+Mod1 y spawn 'paste-type'
+riverctl map normal Control+Mod1 f spawn 'wifi-toggle'
+riverctl map normal Control+Mod1 XF86Eject spawn 'vw-backup-pull-notify'
+# 应用启动
+riverctl map normal Control+Mod1 b spawn 'brave-browser'
+riverctl map normal Control+Mod1 l spawn 'Thunar'
+riverctl map normal Control+Mod1 t spawn 'transmission-gtk'
+riverctl map normal Control+Mod1 n spawn 'blueman-manager'
+riverctl map normal Control+Mod1 p spawn 'pavucontrol'
+riverctl map normal Control+Mod1 k spawn '~/.local/bin/term'
+riverctl map normal Control+Mod1 a spawn 'cliptask'
+riverctl map normal Control+Mod1 d spawn 'bt'
+# 监视
+riverctl map normal Mod4+Shift b spawn 'foot -e btop'
+riverctl map normal Mod4+Shift h spawn 'foot -e htop'
+# 语音
+riverctl map normal Control+Mod1 e spawn '~/.local/bin/saysel'
+riverctl map normal Control+Mod1+Shift e spawn 'pkill -f sd-edge-tts'
+riverctl map normal Control+Mod1+Shift r spawn '~/.local/bin/reader'
+riverctl map normal Control+Mod4 v spawn 'voice-ctl 6'
+# 音乐
+riverctl map normal Control+Mod4 m spawn '~/.local/bin/music-notify'
+# 音量 / 屏幕亮度 / 键盘背光（MacBook 功能键 keysyms）
+riverctl map normal None XF86AudioRaiseVolume spawn '~/.local/bin/vol-osd up'
+riverctl map normal None XF86AudioLowerVolume spawn '~/.local/bin/vol-osd down'
+riverctl map normal None XF86AudioMute spawn '~/.local/bin/vol-osd mute'
+riverctl map normal None XF86MonBrightnessUp spawn '~/.local/bin/bright-osd up'
+riverctl map normal None XF86MonBrightnessDown spawn '~/.local/bin/bright-osd down'
+riverctl map normal None XF86KbdBrightnessUp spawn '~/.local/bin/kbdbrightness up'
+riverctl map normal None XF86KbdBrightnessDown spawn '~/.local/bin/kbdbrightness down'
+# 媒体播放/上下曲（Fn+F8/F9/F10 在 apple 键盘映射到 play keysym）
+riverctl map normal None XF86AudioPlay spawn 'mpc -q toggle'
+riverctl map normal None XF86AudioNext spawn 'mpc -q next'
+riverctl map normal None XF86AudioPrev spawn 'mpc -q prev'
+riverctl map normal Control+Mod4 comma spawn 'foot -e ncmpcpp'
+riverctl map normal Control+Mod4 period spawn 'mpc -q next'
+riverctl map normal Control+Mod4 slash spawn 'mpc -q prev'
+riverctl map normal Control+Mod4 semicolon spawn 'mpc -q mute'
+# 番茄钟 / 传文件
+riverctl map normal Control+Mod4 f spawn 'focus'
+riverctl map normal Control+Mod4+Shift f spawn 'foot -e sendfile'
+# Super+Caps_Lock screenkey 在 Wayland 无等价（screenkey 是 X 程序），跳过
+
+# ===== 守护进程（river 会话专属）=====
+# 剪贴板历史：用 wl-clipboard watcher（X 会话那个 xclip 循环互不干扰）
+pgrep -f 'cliphist store' >/dev/null || {
+    wl-paste --type text --watch cliphist store 2>/dev/null &
+    wl-paste --type image --watch cliphist store 2>/dev/null &
+}
+# 音乐服务器（用户级 mpd，非 runit 服务；不在 X 会话里起就没人拉起它）
+pgrep -x mpd >/dev/null || mpd ~/.config/mpd/mpd.conf
+# 输入法（复用 fcitx5，已有实例直接沿用——它是跨会话单例）
+export GTK_IM_MODULE=fcitx5 QT_IM_MODULE=fcitx5 XMODIFIERS=@im=fcitx
+pgrep -x fcitx5 >/dev/null || fcitx5 -d &
+# 通知：mako（dunst 是 X-only，两会话各跑各的）
+pgrep -x mako >/dev/null || mako &
+# 状态栏（复刻 sbar）
+pgrep -x waybar >/dev/null || waybar &
+# 壁纸：swaybg 用 wal 当前壁纸（pywal 3.3 无 -g，路径存在 cache/wal/wal 文件里）
+WALPAPER="$(cat "$HOME/.cache/wal/wal" 2>/dev/null)"
+[ -n "$WALPAPER" ] && [ -f "$WALPAPER" ] && swaybg -i "$WALPAPER" >/dev/null 2>&1 &
+# 色温（替代 sctd；X 会话的 sctd 只管 X）
+pgrep -x wlsunset >/dev/null || wlsunset 3200K 5400K &
+
+# 首次进入提示
+sleep 2
+notify-send "river" "已启动。键位 ≈ dwm: Super+Enter 终端 / J K H L / Q / 1-9" -t 4000 2>/dev/null || true

@@ -1,0 +1,6 @@
+#!/bin/bash
+# clipmenu: 剪贴板历史选择器 (cliphist + dmenu)
+export DBUS_SESSION_BUS_ADDRESS="unix:path=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/bus"
+sel=$(cliphist list | head -100 | dmenu -i -l 15 -p "剪贴板历史:") || exit 0
+[ -n "$sel" ] && printf '%s\n' "$sel" | cliphist decode | xclip -selection clipboard
+dunstify -a clipmenu -u low -t 1500 "已复制到剪贴板"

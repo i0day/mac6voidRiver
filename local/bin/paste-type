@@ -1,0 +1,7 @@
+#!/bin/bash
+# paste-type: 把剪贴板内容"打字"出来 (对付禁用 Ctrl+V 的表单/需要逐字符事件的输入框)
+text=$(xclip -o -selection clipboard 2>/dev/null)
+[ -z "$text" ] && { dunstify -a paste-type -u low "剪贴板是空的"; exit 1; }
+dunstify -a paste-type -u low -t 1200 "⌨️ 正在打字... (1.5s 后开始)"
+sleep 1.5
+xdotool type --clearmodifiers --delay 15 -- "$text"

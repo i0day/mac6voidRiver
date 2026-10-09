@@ -1,0 +1,2 @@
+# 防蓝牙芯片 USB 自动挂起假死（BCM92046 0a5c:2148, 2026-10 无声事故根因）
+ACTION=="add", ATTR{idVendor}=="0a5c", ATTR{idProduct}=="2148", TEST=="power/control", ATTR{power/control}="on"

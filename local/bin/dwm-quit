@@ -1,0 +1,6 @@
+#!/bin/bash
+# 彻底退出 X 回到 tty1（不再被自动登录链重新拉起 startx）
+# 原理：先放一次性旗标 ~/.cache/x_stop，.bash_profile 看到它就跳过自动 startx。
+mkdir -p ~/.cache
+touch ~/.cache/x_stop
+pkill -x dwm

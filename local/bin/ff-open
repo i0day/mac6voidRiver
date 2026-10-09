@@ -1,0 +1,29 @@
+#!/bin/bash
+# ff-open: 在已运行的 Firefox 里开 URL（xdotool 直接操作窗口，绕开坏掉的 remote/parent.lock 机制）
+# 用法: ff-open <url>
+url="$1"
+[ -z "$url" ] && exit 1
+
+# 主浏览器窗口 = 面积最大的那个（"Firefox"/"Close tab" 之类的小弹窗排除）
+wid=""
+best=0
+for w in $(xdotool search --class firefox 2>/dev/null); do
+    geo=$(xdotool getwindowgeometry "$w" 2>/dev/null | grep Geometry | grep -oE '[0-9]+x[0-9]+' | head -1)
+    [ -z "$geo" ] && continue
+    area=$(( ${geo%x*} * ${geo#*x} ))
+    [ "$area" -gt "$best" ] && { best=$area; wid=$w; }
+done
+if [ -n "$wid" ] && xdotool windowactivate --sync "$wid" 2>/dev/null; then
+    xdotool key --window "$wid" ctrl+t
+    sleep 0.4
+    xdotool type --clearmodifiers --delay 12 --window "$wid" "$url"
+    xdotool key --window "$wid" Return
+    exit 0
+fi
+
+# 没有运行中的 Firefox 窗口: 直接启动
+if command -v firefox >/dev/null 2>&1; then
+    setsid firefox "$url" >/dev/null 2>&1 &
+else
+    xdg-open "$url"
+fi

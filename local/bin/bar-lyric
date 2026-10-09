@@ -1,0 +1,9 @@
+#!/bin/sh
+# bar-lyric — dwm topbar 歌词输出包装器
+# mutagen 只装在 Hermes python 里; 运行时 glob 解析其真实路径 (路径含数字段, 显示会被遮蔽, 故不能硬写)
+PY=""
+for c in "$HOME"/.hermes/tools/python-*/bin/python3; do
+    [ -x "$c" ] && { PY="$c"; break; }
+done
+[ -z "$PY" ] && PY=python3
+exec "$PY" "$HOME/.local/lib/bar-lyric.py" "$@"

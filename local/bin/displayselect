@@ -1,0 +1,21 @@
+#!/bin/bash
+# 显示输出选择 (dwm Super+F3) — 笔记本+外接屏切换
+connected=$(xrandr | grep " connected" | awk '{print $1}')
+current=$(xrandr | grep " connected primary" | awk '{print $1}')
+mapfile -a outs <<< "$connected"
+if [ "${#outs[@]}" -lt 2 ]; then
+  dunstify "displayselect" "只有一块屏幕连接"
+  exit 0
+fi
+primary=$(printf "%s\n" "${outs[@]}" | dmenu -i -p "主屏:")
+[ -z "$primary" ] && exit 1
+others=$(xrandr | grep " connected" | grep -v "^$primary" | awk '{print $1}')
+if [ -n "$others" ]; then
+  xrandr --output "$primary" --primary --auto
+  for o in $others; do
+    xrandr --output "$o" --auto --right-of "$primary"
+  done
+else
+  xrandr --output "$primary" --primary --auto
+fi
+dunstify "displayselect" "主屏: $primary"
